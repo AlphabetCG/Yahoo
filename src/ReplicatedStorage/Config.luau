@@ -40,6 +40,7 @@ Config.Bounds = { MinX = -78, MaxX = 78, MinZ = -42, MaxZ = 42 }
 Config.UnitOrder = { "Herobrine" }
 Config.Units = {
 	Herobrine = {
+		Rarity = "Rare",
 		Cost = 400,
 		BeamColor = Color3.fromRGB(255, 255, 255),
 		Levels = {
@@ -55,6 +56,23 @@ Config.Units = {
 function Config.GetStats(unitName, level)
 	local unit = Config.Units[unitName]
 	return unit and unit.Levels[level]
+end
+
+-- ===== Rarity =====
+-- Every unit in Config.Units needs a Rarity from this list.
+--   Order = sort order (higher = rarer), MaxLevel = account level cap, SellValue = gems when sold
+Config.RarityOrder = { "Rare", "Epic", "Legendary", "Mythic", "Secret" }
+Config.Rarities = {
+	Rare = { Color = Color3.fromRGB(80, 160, 255), Order = 1, MaxLevel = 30, SellValue = 5 },
+	Epic = { Color = Color3.fromRGB(180, 90, 255), Order = 2, MaxLevel = 40, SellValue = 15 },
+	Legendary = { Color = Color3.fromRGB(255, 196, 40), Order = 3, MaxLevel = 50, SellValue = 40 },
+	Mythic = { Color = Color3.fromRGB(255, 70, 110), Order = 4, MaxLevel = 60, SellValue = 100 },
+	Secret = { Color = Color3.fromRGB(30, 30, 30), Order = 5, MaxLevel = 60, SellValue = 250 },
+}
+
+function Config.RarityOf(unitName)
+	local unit = Config.Units[unitName]
+	return Config.Rarities[unit and unit.Rarity or "Rare"] or Config.Rarities.Rare
 end
 
 function Config.MaxLevel(unitName)
@@ -86,17 +104,20 @@ Config.Boss = {
 }
 
 -- ===== Inventory / rewards =====
--- Materials players can collect (shown in the inventory). Add new ones here, then hand them out
--- from Config.Rewards or from any server script with PlayerData.AddMaterial(player, key, amount).
+-- Items players can collect (shown in the inventory, saved in profile.Items). Add new ones here, then
+-- hand them out from Config.Rewards or from any server script with PlayerData.AddItem(player, key, amount).
+--   Kind = "Material" (crafting / upgrade resource) or "Consumable" (used up by an action)
 Config.Materials = {
-	WispEssence = { Name = "Wisp Essence", Color = Color3.fromRGB(110, 220, 130), Desc = "Dropped by wisps. Used for upgrades later." },
-	VoidCrystal = { Name = "Void Crystal", Color = Color3.fromRGB(170, 90, 240), Desc = "Dropped by the Wisp King boss." },
+	WispEssence = { Name = "Wisp Essence", Kind = "Material", Color = Color3.fromRGB(110, 220, 130), Desc = "Dropped by wisps. Used for upgrades later." },
+	VoidCrystal = { Name = "Void Crystal", Kind = "Material", Color = Color3.fromRGB(170, 90, 240), Desc = "Dropped by the Wisp King boss." },
 }
 Config.MaterialOrder = { "WispEssence", "VoidCrystal" }
 
 -- every new player starts with these units: { UnitName = copies }
 Config.StarterUnits = { Herobrine = 1 }
 Config.StarterGems = 300
+Config.MaxUnitsOwned = 150   -- unit storage; summons are refused once it is full
+Config.LoadoutSlots = 6      -- equipped units (used by the loadout, coming later)
 
 -- rewards when a stage ends (granted by the server)
 Config.Rewards = {
