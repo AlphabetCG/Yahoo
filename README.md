@@ -1,9 +1,138 @@
-# YAHOORoblox
+# YAHOO — Anime Tower Defense (Roblox)
 
-Rojo project. See default.project.json.
+A pixel-art tower defense game for Roblox. Players place **units** beside a path. Waves of **wisps** walk toward the castle, and the stage ends with a boss, the **Wisp King**. Between stages, players spend **Gems** to summon units and collect **materials** for future upgrade systems.
+
+The whole world is drawn as 2D pixel art on a GUI layer, built from plain colored `Frame`s with no uploaded images. The server simulates everything with invisible parts and attributes, and each client draws what it sees.
+
+> The roadmap and the full feature specification live in **[SPECIFICATION.md](SPECIFICATION.md)**.
+
+---
+
+## Getting started
+
+Tooling is managed by [Rokit](https://github.com/rojo-rbx/rokit) (see [rokit.toml](rokit.toml)), and the project uses Rojo 7.7.1.
+
+```sh
+rokit install      # installs rojo
+rojo serve         # serves default.project.json
+```
+
+Then open the place in Roblox Studio and click **Connect** in the Rojo plugin.
+
+- **API access:** To test saving in Studio, turn on *Game Settings → Security → Enable Studio Access to API Services*. If it's off, the DataStore calls fail and the game runs on default data without saving. This is intended behaviour.
+- **Syncback:** The repo was imported from the live place with `rojo syncback`, so `.rbxm` files (waypoints, terrain, baseplate, tower models) are binary. Edit them in Studio and sync back.
+
+---
+
+## Current features
+
+| Area | What exists today |
+|---|---|
+| **Match flow** | Menu → **Prep** phase (60 s, or press START MATCH) → **15 rounds** → Victory / Game Over. Retry, Main Menu and Surrender (with confirmation). |
+| **Waves** | Enemy count = `8 + 6.4 × round`. Tiers 1–5 (tier = HP, and each hit drops a tier and changes color and speed). The boss joins round 15 with 200 HP. |
+| **Auto Skip** | **ON**: the next round starts once 60–70 % of the current wave has spawned. **OFF**: the next round starts once the whole wave has spawned. The setting is saved per player. |
+| **Game speed** | x1 / x2 / x3 for everyone. The stage timer runs in real time. |
+| **Units** | One unit, **Herobrine**, with 5 in-match upgrade levels, 6 targeting modes (First / Last / Strongest / Weakest / Closest / None) and selling at a 50 % refund. |
+| **Money** | Per player, earned per HP removed (`RewardPerPop`) plus a round bonus for everyone. |
+| **Saved profile** | Gems, owned units (stored as copy counts), materials, settings and lifetime stats, kept in a DataStore with autosave and retries. |
+| **Rewards** | Gems, Wisp Essence and Void Crystal at stage end, based on result, round reached, kills and whether the boss died. |
+| **Summon** | 100 Gems per roll from a weighted pool. The pool currently holds only Herobrine. |
+| **Inventory UI** | Two tabs: Units (owned / locked) and Materials. |
+| **Settings** | Auto Skip, health bars (hover / always), resume, surrender. |
+| **Rendering** | Pixel map with path, cave and castle. Sprites with idle and recoil animations, health bars, shot bolts and particles, a placement ghost with a range ring, and mouse-wheel zoom. |
+
+---
+
+## Project layout
 
 ```
-rojo serve
+default.project.json          Rojo tree (maps src/* to Roblox services)
+src/
+  ReplicatedStorage/
+    Config.luau               ALL tunable numbers: economy, waves, units, tiers, boss, rewards, summon
+                              + path helpers (GetPath, DistanceToPath, CanPlace)
+    PixelArt.luau             Sprite definitions (Herobrine, Wisp, Arrow) + Frame-based renderer
+    WorldView.luau            Client-side 2D world renderer (map, enemies, units, shots, ghost, zoom)
+    TowerModels/              Herobrine.rbxm, Rookie.rbxm (3D models; only the disabled 3D client uses them)
+  ServerScriptService/
+    GameServer.server.luau    Authoritative game loop: rounds, spawning, movement, targeting, damage,
+                              money, lives, place/upgrade/sell, remotes
+    PlayerData.luau           DataStore profiles, rewards, summon, settings (ModuleScript)
+  StarterPlayer/StarterPlayerScripts/
+    ClientMain.client.luau    All UI: menu, HUD, shop, upgrade panel, settings, inventory, result screen, input
+  ServerStorage/
+    ClientMain_3D_backup      Old 3D client (Disabled), kept for reference
+    Eclipse Animator Saves/   Plugin data (not game code)
+  Workspace/
+    Waypoints/1..10           The enemy path. Move these parts in Studio to reshape it
+    Towers/, Enemies/         Runtime folders filled by the server
 ```
-Then click Connect in the Rojo plugin inside Roblox Studio.
 
+---
+
+## How it works
+
+### Server authority
+`GameServer` owns all game state. Clients only send requests through remotes and read state from attributes.
+
+**Match state** is stored as attributes on `workspace`:
+
+| Attribute | Meaning |
+|---|---|
+| `State` | `Menu` · `Playing` · `GameOver` · `Victory` |
+| `Phase` | `Menu` · `Prep` · `Match` |
+| `Round`, `Lives`, `Countdown`, `PrepLeft` | Round and HUD values |
+| `GameSpeed`, `AutoSkip` | Match settings |
+| `StageTime`, `StageSync` | Stage clock. The client extrapolates between syncs |
+| `EndReason` | `Clear` · `Defeat` · `Surrender` |
+
+Other state lives on other objects:
+
+- **Per-player money:** the `Money` attribute on each `Player`.
+- **Enemies:** invisible ball parts in `workspace.Enemies` with the attributes `Tier`, `Health`, `MaxHealth`, `Boss` and `Born`.
+- **Units:** invisible models in `workspace.Towers` with the attributes `UnitName`, `Level`, `OwnerId`, `Targeting` and `Spent`.
+
+### Remotes (`ReplicatedStorage.Remotes`, created at runtime)
+| Remote | Kind | Purpose |
+|---|---|---|
+| `StartGame`, `BeginMatch`, `Retry`, `ReturnToMenu`, `Surrender` | Event | Match flow |
+| `SetSpeed`, `SetAutoSkip`, `SetTargeting` | Event | Match and unit settings |
+| `PlaceTower`, `UpgradeTower`, `SellTower` | Function | Unit actions (validated on the server) |
+| `Shot` | UnreliableEvent | Tells clients to draw a shot |
+| `GetProfile`, `Summon` | Function | Profile data |
+| `ProfileUpdated`, `StageRewards`, `SetSetting` | Event | Profile data |
+
+### Timing
+- **Game time:** `gameTime` speeds up with x2 / x3. Spawning, cooldowns and round countdowns all use game time.
+- **Real time:** the prep countdown, the stage timer and shot travel (`ShotTravel`) use real time.
+- **Hit timing:** damage lands when the shot arrives. Enemies track `Pending` damage so units don't overkill.
+
+### Saving
+`PlayerData` stores one table under `Player_<UserId>` in the DataStore `PlayerData_v1`:
+
+- It saves at most once every 7 s, autosaves every 60 s, and saves on leave and on `BindToClose`.
+- If loading fails, the player gets default data and their real save is never overwritten.
+
+---
+
+## Tweaking the game
+
+Nearly everything is in [Config.luau](src/ReplicatedStorage/Config.luau):
+
+- **New unit:** add a sprite to `PixelArt` (`defs.<Name>`) and an entry to `Config.Units`. Then add it to `Config.UnitOrder` to show it in the shop, and to `Config.Summon.Pool` to make it summonable.
+- **New material:** add it to `Config.Materials` and `Config.MaterialOrder`. Grant it with `PlayerData.AddMaterial(player, key, n)`.
+- **Waves and economy:** `EnemiesBase`, `EnemiesPerRound`, `RewardPerPop`, `RoundBonus`, `StartMoney` and `Tiers[*].Speed`.
+- **Path:** move or add the `Workspace.Waypoints` parts, which are numbered in order.
+
+---
+
+## Known limitations
+
+These are all covered in the spec:
+
+- **Effectively single-player.** The whole server shares one match, and any player can start, surrender, retry or change speed and Auto Skip.
+- **Units are copy counts.** Owned units are stored as `{ Herobrine = 2 }`, so there are no individual unit levels or traits yet.
+- **No session locking on saves.** This is required before adding teleports or Robux purchases.
+- **Little content.** There is one unit, one enemy type plus the boss, and one map.
+- **x3 speed is free.** It is planned as a gamepass perk.
+- **Dead code.** `GameServer` still references `LevelLabel` (now unused), and `Rookie.rbxm` and the 3D backup client are no longer used.
