@@ -1,4 +1,4 @@
-﻿# YAHOORoblox
+# YAHOORoblox
 
 Rojo project. See default.project.json.
 

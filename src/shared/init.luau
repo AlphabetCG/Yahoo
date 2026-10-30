@@ -1,3 +1,0 @@
-﻿local Shared = {}
-
-return Shared
