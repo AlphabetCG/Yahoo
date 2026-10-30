@@ -45,7 +45,16 @@ local SETTING_TYPES = {
 -- tables whose keys are open-ended (reconcile must not fill them with defaults)
 local OPEN_TABLES = { Units = true, Items = true, Loadout = true, Codes = true, Purchases = true, Pity = true }
 
-local store = DataStoreService:GetDataStore(STORE_NAME)
+-- GetDataStore throws in a place that was never published to Roblox: then everyone plays without saving
+local storeOk, store = pcall(function()
+	return DataStoreService:GetDataStore(STORE_NAME)
+end)
+if not storeOk then
+	warn("PlayerData: no DataStore (" .. tostring(store) .. "). Publish the place (File > Publish to Roblox) "
+		.. "and turn on Game Settings > Security > Enable Studio Access to API Services to save progress. "
+		.. "Playing without saving for now.")
+	store = nil
+end
 
 local PlayerData = {}
 local profiles = {}   -- [player] = profile
@@ -269,7 +278,7 @@ end
 -- release = true drops the session lock (player leaving / server closing)
 function PlayerData.Save(player, release)
 	local profile = profiles[player]
-	if not profile or loadFailed[player] then return false end
+	if not profile or loadFailed[player] or not store then return false end
 	-- wait for a running save instead of skipping, so the final save on leave is never lost
 	local t0 = os.clock()
 	while saving[player] and os.clock() - t0 < 30 do task.wait(0.1) end
@@ -324,6 +333,7 @@ end
 -- Reads the profile and takes the session lock in one UpdateAsync.
 -- Returns status ("ok" | "locked" | "error"), data (table or nil), err
 local function tryAcquire(player)
+	if not store then return "nostore", nil end
 	local status, result = "ok", nil
 	local ok, err = pcall(function()
 		store:UpdateAsync(keyFor(player), function(old)
@@ -343,6 +353,7 @@ local function tryAcquire(player)
 end
 
 local function releaseLock(player)
+	if not store then return end
 	pcall(function()
 		store:UpdateAsync(keyFor(player), function(old)
 			if typeof(old) ~= "table" or typeof(old.Lock) ~= "table" or old.Lock.JobId ~= JOB_ID then
@@ -359,7 +370,7 @@ local function loadProfile(player)
 	local errors, lockedTries = 0, 0
 	while true do
 		status, data, err = tryAcquire(player)
-		if status == "ok" then break end
+		if status == "ok" or status == "nostore" then break end
 		if player.Parent == nil then return end
 		if status == "error" then
 			errors += 1

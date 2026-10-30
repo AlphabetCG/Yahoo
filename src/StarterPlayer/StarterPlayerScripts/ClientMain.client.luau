@@ -15,23 +15,53 @@ local Config = require(ReplicatedStorage:WaitForChild("Config"))
 local PixelArt = require(ReplicatedStorage:WaitForChild("PixelArt"))
 local WorldView = require(ReplicatedStorage:WaitForChild("WorldView"))
 
-local remotes = ReplicatedStorage:WaitForChild("Remotes")
-local startGameRemote = remotes:WaitForChild("StartGame")
-local returnToMenuRemote = remotes:WaitForChild("ReturnToMenu")
-local surrenderRemote = remotes:WaitForChild("Surrender")
-local setSpeedRemote = remotes:WaitForChild("SetSpeed")
-local setAutoSkipRemote = remotes:WaitForChild("SetAutoSkip")
-local beginMatchRemote = remotes:WaitForChild("BeginMatch")
-local retryRemote = remotes:WaitForChild("Retry")
-local placeTowerRemote = remotes:WaitForChild("PlaceTower")
-local upgradeTowerRemote = remotes:WaitForChild("UpgradeTower")
-local sellTowerRemote = remotes:WaitForChild("SellTower")
-local setTargetingRemote = remotes:WaitForChild("SetTargeting")
-local getProfileRemote = remotes:WaitForChild("GetProfile")
-local profileUpdatedRemote = remotes:WaitForChild("ProfileUpdated")
-local setSettingRemote = remotes:WaitForChild("SetSetting")
-local summonRemote = remotes:WaitForChild("Summon")
-local stageRewardsRemote = remotes:WaitForChild("StageRewards")
+-- If the server scripts fail to start, the remotes below never appear and the screen would stay
+-- empty. After 10 seconds, say so (and what is missing) instead of showing nothing.
+local waitingFor = "Remotes"
+local startupGui = nil
+task.delay(10, function()
+	if not waitingFor then return end
+	startupGui = Instance.new("ScreenGui")
+	startupGui.Name = "TDStartupGui"
+	startupGui.ResetOnSpawn = false
+	startupGui.DisplayOrder = 100
+	local text = Instance.new("TextLabel")
+	text.Size = UDim2.fromScale(1, 1)
+	text.BackgroundColor3 = Color3.fromRGB(20, 22, 34)
+	text.TextColor3 = Color3.fromRGB(255, 208, 84)
+	text.Font = Enum.Font.Arcade
+	text.TextSize = 24
+	text.TextWrapped = true
+	text.Text = "Waiting for the server... (missing: " .. tostring(waitingFor) .. ")
+"
+		.. "The server script probably stopped with an error: check View > Output in Studio."
+	text.Parent = startupGui
+	startupGui.Parent = playerGui
+end)
+local function waitRemote(parent, name)
+	waitingFor = name
+	return parent:WaitForChild(name)
+end
+
+local remotes = waitRemote(ReplicatedStorage, "Remotes")
+local startGameRemote = waitRemote(remotes, "StartGame")
+local returnToMenuRemote = waitRemote(remotes, "ReturnToMenu")
+local surrenderRemote = waitRemote(remotes, "Surrender")
+local setSpeedRemote = waitRemote(remotes, "SetSpeed")
+local setAutoSkipRemote = waitRemote(remotes, "SetAutoSkip")
+local beginMatchRemote = waitRemote(remotes, "BeginMatch")
+local retryRemote = waitRemote(remotes, "Retry")
+local placeTowerRemote = waitRemote(remotes, "PlaceTower")
+local upgradeTowerRemote = waitRemote(remotes, "UpgradeTower")
+local sellTowerRemote = waitRemote(remotes, "SellTower")
+local setTargetingRemote = waitRemote(remotes, "SetTargeting")
+local getProfileRemote = waitRemote(remotes, "GetProfile")
+local profileUpdatedRemote = waitRemote(remotes, "ProfileUpdated")
+local setSettingRemote = waitRemote(remotes, "SetSetting")
+local summonRemote = waitRemote(remotes, "Summon")
+local stageRewardsRemote = waitRemote(remotes, "StageRewards")
+waitingFor = nil
+if startupGui then startupGui:Destroy() end
 
 -- the player's saved data (settings, gems, units, items); filled in by the server
 -- profile.Units = { [uid] = { Id, Name, Level, ... } }: one entry per owned unit
@@ -1240,10 +1270,10 @@ end
 --  materials and SUMMON. Data comes from the server's saved profile; every action goes through
 --  a RemoteFunction and the server sends the updated profile back.
 -- =====================================================================
-local equipUnitRemote = remotes:WaitForChild("EquipUnit")
-local lockUnitRemote = remotes:WaitForChild("LockUnit")
-local sellUnitsRemote = remotes:WaitForChild("SellUnits")
-local feedUnitRemote = remotes:WaitForChild("FeedUnit")
+local equipUnitRemote = waitRemote(remotes, "EquipUnit")
+local lockUnitRemote = waitRemote(remotes, "LockUnit")
+local sellUnitsRemote = waitRemote(remotes, "SellUnits")
+local feedUnitRemote = waitRemote(remotes, "FeedUnit")
 
 local INV_W, INV_H = 780, 620
 local inventoryDim = make("TextButton", {
