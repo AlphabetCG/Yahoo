@@ -54,7 +54,6 @@ src/
                               + path helpers (GetPath, DistanceToPath, CanPlace)
     PixelArt.luau             Sprite definitions (Herobrine, Wisp, Arrow) + Frame-based renderer
     WorldView.luau            Client-side 2D world renderer (map, enemies, units, shots, ghost, zoom)
-    TowerModels/              Herobrine.rbxm, Rookie.rbxm (3D models; only the disabled 3D client uses them)
   ServerScriptService/
     GameServer.server.luau    Authoritative game loop: rounds, spawning, movement, targeting, damage,
                               money, lives, place/upgrade/sell, remotes
@@ -63,7 +62,6 @@ src/
   StarterPlayer/StarterPlayerScripts/
     ClientMain.client.luau    All UI: menu, HUD, shop, upgrade panel, settings, inventory, result screen, input
   ServerStorage/
-    ClientMain_3D_backup      Old 3D client (Disabled), kept for reference
     Eclipse Animator Saves/   Plugin data (not game code)
   Workspace/
     Waypoints/1..10           The enemy path. Move these parts in Studio to reshape it
@@ -140,4 +138,3 @@ These are all covered in the spec:
 - **The shop picks the unit copy.** Until the loadout exists, placing a unit uses your highest-level copy of it.
 - **Little content.** There is one unit, one enemy type plus the boss, and one map.
 - **x3 speed is free.** It is planned as a gamepass perk.
-- **Unused files.** `Rookie.rbxm`, `Config.TowerScale` and the 3D backup client are only used by the disabled 3D client.

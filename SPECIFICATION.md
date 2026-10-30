@@ -106,8 +106,7 @@ UnitInstance = {
 
 ### 1.6 Cleanup
 - `GameServer`: remove the dead `LevelLabel` branch in `UpgradeTower`.
-- Decide whether `ServerStorage/ClientMain_3D_backup` and `TowerModels/*` stay. If they do, document them as archived; otherwise delete them.
-- `Config.TowerScale` is used only by the 3D backup.
+- Delete the old 3D client (`ServerStorage/ClientMain_3D_backup`), its `TowerModels/*` and `Config.TowerScale`. They stay available in git history.
 - `.gitignore` the `Eclipse Animator Saves` plugin folder, or leave it alone. It isn't game code.
 - **Fresh clone:** the empty Rojo paths (`src/StarterGui`, `src/StarterPack`, `src/StarterPlayer/StarterCharacterScripts`) aren't in git because empty folders aren't tracked. Add a `.gitkeep` to each so `$path` resolves on a fresh clone.
 
@@ -388,7 +387,7 @@ Each instance levels up permanently. This is separate from in-match Refine.
 ### 7.1 Units
 Leveling, reforge and banners need several units across all rarities.
 - **Minimum target:** **8–10 units**: about 3 Rare, 3 Epic, 2 Legendary and 1 Mythic, plus 1 Limited for the first banner.
-- **Reuse:** `Rookie.rbxm` is a ready-made concept (a Rare starter unit). Give it a pixel sprite in `PixelArt`.
+- **Reuse:** Rookie is a ready-made concept (a Rare starter unit). Its old 3D model is in git history; give it a pixel sprite in `PixelArt`.
 - **Archetypes:** single-target (Herobrine), splash, slow/support, money farm, long-range sniper, close-range rapid. Each needs a sprite, `Levels` (refine path) and a `BeamColor`. Splash, slow and money-farm units need small additions to `updateTowers` / `updateHits`.
 
 ### 7.2 Enemies & stages
