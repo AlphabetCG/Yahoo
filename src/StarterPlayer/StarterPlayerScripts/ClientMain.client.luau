@@ -32,8 +32,7 @@ task.delay(10, function()
 	text.Font = Enum.Font.Arcade
 	text.TextSize = 24
 	text.TextWrapped = true
-	text.Text = "Waiting for the server... (missing: " .. tostring(waitingFor) .. ")
-"
+	text.Text = "Waiting for the server... (missing: " .. tostring(waitingFor) .. ")\n"
 		.. "The server script probably stopped with an error: check View > Output in Studio."
 	text.Parent = startupGui
 	startupGui.Parent = playerGui
