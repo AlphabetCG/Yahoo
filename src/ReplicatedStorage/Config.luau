@@ -144,6 +144,41 @@ function Config.RarityOf(unitName)
 	return Config.Rarities[unit and unit.Rarity or "Rare"] or Config.Rarities.Rare
 end
 
+-- ===== Unit leveling (account level, kept between stages) =====
+-- Separate from Refine: a unit's level is saved on that copy and makes it stronger in every stage.
+-- The level cap comes from its rarity (Config.Rarities[r].MaxLevel).
+Config.Leveling = {
+	XpBase = 20,          -- XP every equipped unit gets when a stage ends...
+	XpPerRound = 4,       -- ...plus this much per round reached
+	VictoryMult = 2,      -- ...times this on a stage clear (no XP for surrendering)
+	XpPerEssence = 10,    -- feeding 1 Wisp Essence gives this much XP
+	DamagePerLevel = 0.03, -- +3% damage per level above 1
+	RangePerLevel = 0.1,   -- +0.1 range per level above 1...
+	MaxRangeBonus = 4,     -- ...up to +4
+}
+
+-- XP needed to go from `level` to level + 1
+function Config.XpToNext(level)
+	return math.floor(20 * level ^ 1.5)
+end
+
+function Config.MaxUnitLevel(unitName)
+	return Config.RarityOf(unitName).MaxLevel
+end
+
+-- Stats of a unit at refine level `refineLevel` (in-match) owned at account level `unitLevel`.
+-- Returns a copy of Levels[refineLevel] with Damage / Range scaled (Ability etc. unchanged).
+function Config.ScaledStats(unitName, refineLevel, unitLevel)
+	local base = Config.GetStats(unitName, refineLevel)
+	if not base then return nil end
+	local L = Config.Leveling
+	local above = math.max(0, (unitLevel or 1) - 1)
+	local stats = table.clone(base)
+	stats.Damage = base.Damage * (1 + L.DamagePerLevel * above)
+	stats.Range = base.Range + math.min(L.RangePerLevel * above, L.MaxRangeBonus)
+	return stats
+end
+
 -- Short text for an ability, e.g. "BURN 2/S FOR 2.5S" (nil when there is none)
 function Config.DescribeAbility(ability)
 	if not ability then return nil end
@@ -207,7 +242,7 @@ Config.MaterialOrder = { "WispEssence", "VoidCrystal" }
 Config.StarterUnits = { Herobrine = 1 }
 Config.StarterGems = 300
 Config.MaxUnitsOwned = 150   -- unit storage; summons are refused once it is full
-Config.LoadoutSlots = 6      -- equipped units (used by the loadout, coming later)
+Config.LoadoutSlots = 6      -- equipped units: only these show up in the in-match shop (keys 1-6)
 -- Studio play tests only: every player gets one copy of each of these units if they don't own one yet
 Config.StudioGrantUnits = { "Voidseer", "Zaruto", "Fluffy", "Ichitoe" }
 

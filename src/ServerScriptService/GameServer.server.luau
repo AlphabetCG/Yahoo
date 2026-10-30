@@ -533,6 +533,9 @@ local function createTower(player, unitName, pos, instance)
 	model:SetAttribute("Targeting", "First")
 	model:SetAttribute("Spent", unit.Cost)
 	model:SetAttribute("UnitId", instance and instance.Id or "")
+	-- the copy's account level (kept between stages); scales damage and range, see Config.ScaledStats
+	local unitLevel = instance and instance.Level or 1
+	model:SetAttribute("UnitLevel", unitLevel)
 
 	model.Parent = towersFolder
 	local entry = {
@@ -540,7 +543,8 @@ local function createTower(player, unitName, pos, instance)
 		Root = root,
 		UnitName = unitName,
 		Level = 1,
-		Stats = Config.GetStats(unitName, 1),
+		Stats = Config.ScaledStats(unitName, 1, unitLevel),
+		UnitLevel = unitLevel,
 		BeamColor = unit.BeamColor,
 		Last = -math.huge,
 		Mode = "First",
@@ -560,6 +564,7 @@ placeTowerRemote.OnServerInvoke = function(player, unitId, pos)
 	if typeof(unitId) ~= "string" or typeof(pos) ~= "Vector3" then return false, "Bad request" end
 	local instance = PlayerData.GetUnit(player, unitId)
 	if not instance then return false, "You do not own this unit" end
+	if not PlayerData.IsEquipped(player, unitId) then return false, "Equip this unit in your loadout first" end
 	local unitName = instance.Name
 	local unit = Config.Units[unitName]
 	if not unit then return false, "Unknown unit" end
@@ -602,7 +607,7 @@ upgradeTowerRemote.OnServerInvoke = function(player, model, all)
 		player:SetAttribute("Money", money - nextStats.Cost)
 		t.Level += 1
 		t.Spent += nextStats.Cost
-		t.Stats = nextStats
+		t.Stats = Config.ScaledStats(t.UnitName, t.Level, t.UnitLevel)
 		bought += 1
 		if all ~= true then break end
 	end
