@@ -209,9 +209,65 @@ local worldGui = make("ScreenGui", {
 }, playerGui)
 WorldView.start(worldGui, { rightInset = SHOP_W, topInset = 176, bottomInset = 156 })
 
+-- ===== Map camera: mouse wheel zooms; right/middle-drag, WASD / arrow keys or a finger drag pan; C re-centers
+local DRAG_THRESHOLD = 6   -- pixels a right-drag must move before it counts as panning (a plain right-click cancels)
+local KEY_PAN_SPEED = 700  -- screen pixels per second for WASD / arrow keys
+local mapDrag = nil        -- { Last = Vector2, Moved = bool } while a right/middle mouse button is held
+
+local function isPanButton(t)
+	return t == Enum.UserInputType.MouseButton2 or t == Enum.UserInputType.MouseButton3
+end
+
+UserInputService.InputBegan:Connect(function(input, processed)
+	if processed or not isPanButton(input.UserInputType) then return end
+	mapDrag = { Last = UserInputService:GetMouseLocation(), Start = UserInputService:GetMouseLocation(), Moved = false }
+end)
+
 UserInputService.InputChanged:Connect(function(input, processed)
 	if input.UserInputType == Enum.UserInputType.MouseWheel and not processed then
 		WorldView.zoom(input.Position.Z > 0 and 1 or -1)
+	elseif input.UserInputType == Enum.UserInputType.MouseMovement and mapDrag then
+		local pos = UserInputService:GetMouseLocation()
+		if not mapDrag.Moved and (pos - mapDrag.Start).Magnitude >= DRAG_THRESHOLD then
+			mapDrag.Moved = true
+		end
+		if mapDrag.Moved then
+			local d = pos - mapDrag.Last
+			WorldView.pan(d.X, d.Y)
+		end
+		mapDrag.Last = pos
+	end
+end)
+
+-- one-finger drag on touch screens (a tap does not pan, so tapping to place still works)
+local lastTouchPan = nil
+UserInputService.TouchPan:Connect(function(_, translation, _, state, processed)
+	if processed or state == Enum.UserInputState.Begin then
+		lastTouchPan = translation
+		return
+	end
+	if lastTouchPan then
+		local d = translation - lastTouchPan
+		WorldView.pan(d.X, d.Y)
+	end
+	lastTouchPan = (state == Enum.UserInputState.End) and nil or translation
+end)
+
+local PAN_KEYS = {
+	[Enum.KeyCode.A] = Vector2.new(1, 0), [Enum.KeyCode.Left] = Vector2.new(1, 0),
+	[Enum.KeyCode.D] = Vector2.new(-1, 0), [Enum.KeyCode.Right] = Vector2.new(-1, 0),
+	[Enum.KeyCode.W] = Vector2.new(0, 1), [Enum.KeyCode.Up] = Vector2.new(0, 1),
+	[Enum.KeyCode.S] = Vector2.new(0, -1), [Enum.KeyCode.Down] = Vector2.new(0, -1),
+}
+RunService.RenderStepped:Connect(function(dt)
+	if UserInputService:GetFocusedTextBox() then return end
+	local dir = Vector2.zero
+	for key, v in pairs(PAN_KEYS) do
+		if UserInputService:IsKeyDown(key) then dir += v end
+	end
+	if dir.Magnitude > 0 then
+		local d = dir.Unit * KEY_PAN_SPEED * dt
+		WorldView.pan(d.X, d.Y)
 	end
 end)
 
@@ -484,7 +540,7 @@ end
 local hint = label(hudGui, {
 	AnchorPoint = Vector2.new(0.5, 0),
 	Position = UDim2.new(0.5, -SHOP_W / 2, 0, 98),
-	Size = UDim2.fromOffset(600, 22),
+	Size = UDim2.fromOffset(820, 22),
 	TextSize = 16,
 	Text = "Click to place   -   Right-click or Q to cancel",
 	Visible = false,
@@ -769,7 +825,7 @@ local function updateHint()
 		hint.Text = "Click to place   -   Right-click or Q to cancel"
 		hint.Visible = true
 	elseif prep then
-		hint.Text = "Place your units before the match begins!"
+		hint.Text = "Place your units before the match begins!   (Right-drag / WASD: move map   C: center)"
 		hint.Visible = true
 	else
 		hint.Visible = false
@@ -1407,6 +1463,17 @@ RunService.RenderStepped:Connect(function()
 end)
 
 -- ===== Input =====
+-- a right-click that did not drag the map cancels placing / closes the refine panel
+UserInputService.InputEnded:Connect(function(input)
+	if not isPanButton(input.UserInputType) then return end
+	local wasDrag = mapDrag and mapDrag.Moved
+	mapDrag = nil
+	if not wasDrag and input.UserInputType == Enum.UserInputType.MouseButton2 and currentState() == "Playing" then
+		selectUnit(nil)
+		deselectTower()
+	end
+end)
+
 local UNIT_KEYS = {
 	Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three,
 	Enum.KeyCode.Four, Enum.KeyCode.Five, Enum.KeyCode.Six,
@@ -1432,13 +1499,12 @@ UserInputService.InputBegan:Connect(function(input, processed)
 			local model = WorldView.getTowerAt(pos)
 			if model then selectTower(model) else deselectTower() end
 		end
-	elseif input.UserInputType == Enum.UserInputType.MouseButton2 then
-		selectUnit(nil)
-		deselectTower()
 	elseif not processed and input.UserInputType == Enum.UserInputType.Keyboard then
 		if input.KeyCode == Enum.KeyCode.Q then
 			selectUnit(nil)
 			deselectTower()
+		elseif input.KeyCode == Enum.KeyCode.C then
+			WorldView.centerView()
 		elseif input.KeyCode == Enum.KeyCode.U then
 			tryUpgrade()
 		else

@@ -31,6 +31,9 @@ local rootFrame, mapScaler, entityScaler
 local S = 4 -- screen pixels per art pixel
 local zoomDelta = 0
 local originX, originY = 0, 0
+-- camera pan, in art pixels (so zooming keeps the same spot in view); clamped to the map
+local panX, panZ = 0, 0
+local PAN_LIMIT_X, PAN_LIMIT_Z = 170, 80
 local rightInset = 200
 local topInset, bottomInset = 176, 156 -- screen space kept free for the HUD plates / prep panel
 local started = false
@@ -75,8 +78,8 @@ local function layout()
 	local availH = size.Y - topInset - bottomInset
 	local base = math.max(2, math.min(math.floor(availW / 340), math.floor(availH / 140)))
 	S = math.clamp(base + zoomDelta, 2, 8)
-	originX = freeW / 2
-	originY = topInset + availH / 2
+	originX = freeW / 2 + panX * S
+	originY = topInset + availH / 2 + panZ * S
 	mapHolder.Position = UDim2.fromOffset(originX, originY)
 	entityHolder.Position = UDim2.fromOffset(originX, originY)
 	mapScale.Scale = S
@@ -581,6 +584,17 @@ end
 
 function WorldView.zoom(delta)
 	zoomDelta = math.clamp(zoomDelta + delta, -1, 3)
+end
+
+-- Moves the map by a screen-pixel delta (drag right = the map moves right)
+function WorldView.pan(dx, dy)
+	panX = math.clamp(panX + dx / S, -PAN_LIMIT_X, PAN_LIMIT_X)
+	panZ = math.clamp(panZ + dy / S, -PAN_LIMIT_Z, PAN_LIMIT_Z)
+end
+
+-- Puts the map back in the middle of the screen
+function WorldView.centerView()
+	panX, panZ = 0, 0
 end
 
 function WorldView.getScale()

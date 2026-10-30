@@ -40,7 +40,7 @@ Then open the place in Roblox Studio and click **Connect** in the Rojo plugin.
 | **Inventory UI** | Two tabs: Units (owned / locked) and Materials. |
 | **Settings** | Auto Skip, health bars (hover / always), resume, surrender. |
 | **Host** | The player who has been in the server longest is the host. Only the host can start, retry, return to menu, surrender, or change speed and Auto Skip. |
-| **Rendering** | Pixel map with path, cave and castle. Sprites with idle and recoil animations, health bars, shot bolts and particles, a placement ghost with a range ring, and mouse-wheel zoom. |
+| **Rendering** | Pixel map with path, cave and castle. Sprites with idle and recoil animations, health bars, shot bolts and particles, a placement ghost with a range ring, mouse-wheel zoom, and panning (right/middle-drag, WASD or arrow keys, one-finger drag on touch; `C` re-centers). |
 
 ---
 
