@@ -749,7 +749,7 @@ local function makePortrait(parent, name)
 	make("UIStroke", { Color = PANEL_EDGE, Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, box)
 	make("Frame", { Position = UDim2.new(0, 0, 1, -22), Size = UDim2.new(1, 0, 0, 22), BackgroundColor3 = rgb(98, 168, 76), BorderSizePixel = 0 }, box)
 	local w, h = PixelArt.size(name)
-	local scale = 4
+	local scale = math.min(4, math.floor(80 / h)) -- taller sprites shrink to fit the 84 px box
 	local holder = make("Frame", {
 		Position = UDim2.new(0.5, -(w * scale) / 2, 0.5, -(h * scale) / 2 - 2),
 		Size = UDim2.fromOffset(0, 0),
@@ -1353,6 +1353,10 @@ RunService.RenderStepped:Connect(function()
 end)
 
 -- ===== Input =====
+local UNIT_KEYS = {
+	Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three,
+	Enum.KeyCode.Four, Enum.KeyCode.Five, Enum.KeyCode.Six,
+}
 UserInputService.InputBegan:Connect(function(input, processed)
 	if currentState() ~= "Playing" then return end
 	if input.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -1383,8 +1387,10 @@ UserInputService.InputBegan:Connect(function(input, processed)
 			deselectTower()
 		elseif input.KeyCode == Enum.KeyCode.U then
 			tryUpgrade()
-		elseif input.KeyCode == Enum.KeyCode.One then
-			selectUnit(Config.UnitOrder[1])
+		else
+			-- 1-6 pick the unit with that [number] in the shop
+			local slot = table.find(UNIT_KEYS, input.KeyCode)
+			if slot and Config.UnitOrder[slot] then selectUnit(Config.UnitOrder[slot]) end
 		end
 	end
 end)

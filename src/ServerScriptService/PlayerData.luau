@@ -307,6 +307,14 @@ local function loadProfile(player)
 			profile = data
 		end
 	end
+	-- Studio play tests: hand out the test units listed in Config.StudioGrantUnits
+	if IS_STUDIO then
+		for _, name in ipairs(Config.StudioGrantUnits or {}) do
+			if Config.Units[name] and select(2, countUnits(profile.Units, name)) == 0 then
+				newUnit(profile.Units, name)
+			end
+		end
+	end
 	profiles[player] = profile
 	replicate(player)
 	if not loadFailed[player] then saveSoon(player) end

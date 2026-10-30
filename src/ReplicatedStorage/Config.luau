@@ -37,7 +37,7 @@ Config.Bounds = { MinX = -78, MaxX = 78, MinZ = -42, MaxZ = 42 }
 -- Levels[1] is the stats when placed. Every following entry is an upgrade:
 --   Cost = price of that upgrade, Name = shown in the upgrade panel,
 --   Damage / Range / Cooldown = the unit's NEW stats after buying it (Cooldown is shown as SPA, seconds per attack).
-Config.UnitOrder = { "Herobrine" }
+Config.UnitOrder = { "Herobrine", "Voidseer" }
 Config.Units = {
 	Herobrine = {
 		Rarity = "Rare",
@@ -49,6 +49,19 @@ Config.Units = {
 			{ Cost = 600, Name = "Rapid Gaze", Damage = 3, Range = 36, Cooldown = 0.45 },
 			{ Cost = 1200, Name = "Burning Gaze", Damage = 4, Range = 40, Cooldown = 0.35 },
 			{ Cost = 2500, Name = "Ultimate Herobrine", Damage = 6, Range = 46, Cooldown = 0.25 },
+		},
+	},
+	-- Legendary test unit: strong from the start, about 2.5x Herobrine's damage per second at every level
+	Voidseer = {
+		Rarity = "Legendary",
+		Cost = 900,
+		BeamColor = Color3.fromRGB(140, 100, 255),
+		Levels = {
+			{ Damage = 4, Range = 38, Cooldown = 0.5 },
+			{ Cost = 700, Name = "Focused Sight", Damage = 5, Range = 42, Cooldown = 0.45 },
+			{ Cost = 1400, Name = "Void Pulse", Damage = 7, Range = 46, Cooldown = 0.38 },
+			{ Cost = 2800, Name = "Violet Burst", Damage = 10, Range = 50, Cooldown = 0.3 },
+			{ Cost = 5000, Name = "Boundless Void", Damage = 15, Range = 56, Cooldown = 0.2 },
 		},
 	},
 }
@@ -118,6 +131,8 @@ Config.StarterUnits = { Herobrine = 1 }
 Config.StarterGems = 300
 Config.MaxUnitsOwned = 150   -- unit storage; summons are refused once it is full
 Config.LoadoutSlots = 6      -- equipped units (used by the loadout, coming later)
+-- Studio play tests only: every player gets one copy of each of these units if they don't own one yet
+Config.StudioGrantUnits = { "Voidseer" }
 
 -- rewards when a stage ends (granted by the server)
 Config.Rewards = {
@@ -133,7 +148,7 @@ Config.Rewards = {
 -- must exist in Config.Units. New units show up in the summon as soon as you add them here.
 Config.Summon = {
 	Cost = 100,
-	Pool = { Herobrine = 100 },
+	Pool = { Herobrine = 95, Voidseer = 5 },
 }
 
 -- ===== Path helpers =====
