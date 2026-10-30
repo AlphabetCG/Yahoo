@@ -47,7 +47,7 @@ Config.Bounds = { MinX = -78, MaxX = 78, MinZ = -42, MaxZ = 42 }
 --     { Kind = "Burn", Dps = n, Duration = s }  damage over time (money is paid for burn damage too)
 --     { Kind = "Slow", Pct = 0.3, Duration = s } walks Pct slower (the line behind it slows down too)
 -- PlaceLimit = optional: overrides Config.DefaultPlaceLimit for this unit (copies on the map per player).
-Config.UnitOrder = { "Herobrine", "Voidseer" }
+Config.UnitOrder = { "Herobrine", "Zaruto", "Fluffy", "Ichitoe", "Voidseer" }
 Config.Units = {
 	Herobrine = {
 		Rarity = "Rare",
@@ -61,6 +61,48 @@ Config.Units = {
 				Ability = { Kind = "Burn", Dps = 1, Duration = 2 } },
 			{ Cost = 2500, Name = "Ultimate Herobrine", Damage = 6, Range = 46, Cooldown = 0.25,
 				Ability = { Kind = "Burn", Dps = 2, Duration = 2.5 } },
+		},
+	},
+	-- Epic, rapid-fire: tiny hits very fast, short range; final refine sets enemies on fire
+	Zaruto = {
+		Rarity = "Epic",
+		Cost = 600,
+		BeamColor = Color3.fromRGB(255, 150, 40),
+		Levels = {
+			{ Damage = 1, Range = 26, Cooldown = 0.2 },
+			{ Cost = 500, Name = "Swift Kunai", Damage = 1, Range = 28, Cooldown = 0.16 },
+			{ Cost = 1000, Name = "Clone Rush", Damage = 2, Range = 30, Cooldown = 0.18 },
+			{ Cost = 2000, Name = "Spiral Strike", Damage = 3, Range = 32, Cooldown = 0.15 },
+			{ Cost = 3800, Name = "Fox Fury", Damage = 4, Range = 34, Cooldown = 0.1,
+				Ability = { Kind = "Burn", Dps = 2, Duration = 2 } },
+		},
+	},
+	-- Epic, long reach: stretchy punches from far away; last refines briefly slow enemies
+	Fluffy = {
+		Rarity = "Epic",
+		Cost = 600,
+		BeamColor = Color3.fromRGB(240, 70, 60),
+		Levels = {
+			{ Damage = 3, Range = 42, Cooldown = 0.6 },
+			{ Cost = 500, Name = "Stretch Punch", Damage = 3, Range = 46, Cooldown = 0.55 },
+			{ Cost = 1000, Name = "Rapid Fists", Damage = 4, Range = 48, Cooldown = 0.4 },
+			{ Cost = 2000, Name = "Giant Fist", Damage = 7, Range = 50, Cooldown = 0.35,
+				Ability = { Kind = "Slow", Pct = 0.15, Duration = 0.6 } },
+			{ Cost = 3800, Name = "Rubber King", Damage = 10, Range = 54, Cooldown = 0.25,
+				Ability = { Kind = "Slow", Pct = 0.25, Duration = 1 } },
+		},
+	},
+	-- Epic, heavy hitter: big slow sword swings at short range; great against tough enemies and the boss
+	Ichitoe = {
+		Rarity = "Epic",
+		Cost = 600,
+		BeamColor = Color3.fromRGB(220, 60, 60),
+		Levels = {
+			{ Damage = 6, Range = 24, Cooldown = 1.0 },
+			{ Cost = 500, Name = "Heavy Slash", Damage = 7, Range = 26, Cooldown = 0.9 },
+			{ Cost = 1000, Name = "Crescent Fang", Damage = 10, Range = 30, Cooldown = 0.8 },
+			{ Cost = 2000, Name = "Dark Mask", Damage = 16, Range = 32, Cooldown = 0.6 },
+			{ Cost = 3800, Name = "Final Release", Damage = 26, Range = 36, Cooldown = 0.6 },
 		},
 	},
 	-- Legendary test unit: strong from the start, about 2.5x Herobrine's damage per second at every level
@@ -167,7 +209,7 @@ Config.StarterGems = 300
 Config.MaxUnitsOwned = 150   -- unit storage; summons are refused once it is full
 Config.LoadoutSlots = 6      -- equipped units (used by the loadout, coming later)
 -- Studio play tests only: every player gets one copy of each of these units if they don't own one yet
-Config.StudioGrantUnits = { "Voidseer" }
+Config.StudioGrantUnits = { "Voidseer", "Zaruto", "Fluffy", "Ichitoe" }
 
 -- rewards when a stage ends (granted by the server)
 Config.Rewards = {
@@ -183,7 +225,7 @@ Config.Rewards = {
 -- must exist in Config.Units. New units show up in the summon as soon as you add them here.
 Config.Summon = {
 	Cost = 100,
-	Pool = { Herobrine = 95, Voidseer = 5 },
+	Pool = { Herobrine = 71, Zaruto = 8, Fluffy = 8, Ichitoe = 8, Voidseer = 5 }, -- Rare 71% / Epic 24% / Legendary 5%
 }
 
 -- ===== Path helpers =====

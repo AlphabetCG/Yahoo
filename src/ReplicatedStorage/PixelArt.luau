@@ -138,6 +138,92 @@ defs.Voidseer = {
 	},
 }
 
+-- Zaruto (Epic): spiky blond hair, forehead plate, whisker marks, black-and-orange jacket (16 x 23)
+defs.Zaruto = {
+	rows = {
+		"...k...kk...k...",
+		"..kyk.kyyk.kyk..",
+		".kyyykyyyykyyyk.",
+		".kyyyyyyyyyyyyk.",
+		"kyyYyyyyyyyyYyyk",
+		"kyybbmmmmmmbbyyk",
+		"kyybbmmMMmmbbyyk",
+		".kybbbbbbbbbbyk.",
+		"..kssssssssssk..",
+		"..kseesssseesk..",
+		"..kwsssssssswk..",
+		"..kSwsssssswSk..",
+		"..kkjjjjjjjjkk..",
+		"..kjjjjjzjjjjk..",
+		"..kjssjjzjssjk..",
+		"..kjjjjjzjjjjk..",
+		"..kooooozooook..",
+		"..kOooooOzooOk..",
+		"..kkkkkkkkkkkk..",
+		"..kooookkooook..",
+		"..kttookkooook..",
+		"..kooookkooook..",
+		"..kggggkkggggk..",
+	},
+	palette = { k = rgb(20, 16, 28), y = rgb(250, 218, 70), Y = rgb(222, 170, 40), b = rgb(36, 34, 48), m = rgb(196, 200, 210), M = rgb(110, 114, 130), s = rgb(246, 206, 170), S = rgb(214, 168, 134), e = rgb(50, 90, 210), w = rgb(200, 120, 110), j = rgb(40, 38, 52), z = rgb(150, 150, 162), o = rgb(240, 132, 44), O = rgb(200, 98, 30), t = rgb(236, 236, 240), g = rgb(96, 66, 50) },
+}
+
+-- Fluffy (Epic): straw hat with a red band, big grin, red vest, blue shorts, sandals (16 x 22)
+defs.Fluffy = {
+	rows = {
+		"....kkkkkkkk....",
+		"...khhhhhhhhk...",
+		"...krrrrrrrrk...",
+		"..khhhhhhhhhhk..",
+		"khhhhhhhhhhhhhhk",
+		".kkaaaaaaaaaakk.",
+		"..kassssssssak..",
+		"..kssdssssdssk..",
+		"..kssqwwwwqcsk..",
+		"..kssqTTTTqssk..",
+		"..ksssqqqqsssk..",
+		".ksvvvvssvvvvsk.",
+		".ksvvvvyvvvvvsk.",
+		".ksvvvvvvvvvvsk.",
+		".kssvvvyvvvvssk.",
+		"..kvvvvvvvvvvk..",
+		"..kbbbbbbbbbbk..",
+		"..kbbbbkkbbbbk..",
+		"..kwwwwkkwwwwk..",
+		"...ksssk.ksssk..",
+		"...ksssk.ksssk..",
+		"..kgggk..kgggk..",
+	},
+	palette = { k = rgb(20, 16, 28), h = rgb(240, 196, 70), r = rgb(190, 40, 46), a = rgb(26, 24, 30), s = rgb(246, 206, 170), d = rgb(20, 16, 28), q = rgb(110, 30, 34), w = rgb(255, 255, 255), T = rgb(222, 100, 110), c = rgb(200, 50, 50), v = rgb(186, 40, 46), y = rgb(250, 210, 60), b = rgb(70, 110, 200), g = rgb(110, 72, 50) },
+}
+
+-- Ichitoe (Epic): spiky orange hair, black robe with a white sash, huge blade on his back (18 x 21)
+defs.Ichitoe = {
+	rows = {
+		"...k..kk..k.......",
+		"..kok.kook.kok....",
+		".koookooookoook...",
+		".kooooooooooook...",
+		"koooOooooooOoook..",
+		"kooooooooooooook..",
+		".kosssssssssok..kk",
+		"..ksdssssdssk..kWk",
+		"..ksssssssssk.kWGk",
+		"...kssssssskk.kWGk",
+		"..kxxxwwwxxxxkkWGk",
+		".kxxxxxwxRxxxxkWGk",
+		".ksxxxxxRxxxxsxkGk",
+		".kkxxxxRxxxxxkkWGk",
+		"..kxWWWWWWWxxk.kGk",
+		"..kxxxxxxxxxxk..kk",
+		"..kxxxxxxxxxxk....",
+		"..kxxxxkkxxxxk....",
+		"..kxxxxkkxxxxk....",
+		"..kxxxk..kxxxk....",
+		"..kwggk..kggwk....",
+	},
+	palette = { k = rgb(20, 16, 28), o = rgb(250, 140, 40), O = rgb(214, 104, 24), s = rgb(246, 206, 170), d = rgb(30, 24, 28), x = rgb(36, 34, 44), w = rgb(240, 240, 244), R = rgb(170, 40, 44), W = rgb(236, 236, 242), G = rgb(150, 152, 164), g = rgb(150, 104, 60) },
+}
 -- Wisp: the enemy. Its color comes from the enemy tier (12 x 12)
 defs.Wisp = {
 	rows = {
