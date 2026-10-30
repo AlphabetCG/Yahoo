@@ -23,6 +23,8 @@ local DIRT = rgb(168, 128, 82)
 local DIRT_EDGE = rgb(92, 64, 42)
 local BLACK = Color3.new(0, 0, 0)
 local WHITE = Color3.new(1, 1, 1)
+local BURN_FX = rgb(255, 150, 60)
+local SLOW_FX = rgb(110, 210, 255)
 
 -- state
 local rootFrame, mapScaler, entityScaler
@@ -606,6 +608,15 @@ function WorldView.update(dt)
 		local bob = -math.floor(math.abs(math.sin(now * 7 + vis.phase)) * 2.2)
 		vis.container.Position = UDim2.fromOffset(px - 6, pz - 11 + bob)
 		vis.container.ZIndex = 2000 + pz
+
+		-- Refine abilities: burning enemies give off orange sparks, slowed ones blue sparks
+		local status = part:GetAttribute("Status")
+		if status and status ~= "" and now - (vis.fxAt or 0) >= 0.25 then
+			vis.fxAt = now
+			local lift = vis.boss and 10 or 4
+			if string.find(status, "Burn", 1, true) then burst(vis.x, vis.z - lift, BURN_FX, 2) end
+			if string.find(status, "Slow", 1, true) then burst(vis.x, vis.z - lift, SLOW_FX, 2) end
+		end
 	end
 
 	-- health bars: the enemy under the mouse (or all of them when the setting is on)

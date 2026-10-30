@@ -500,7 +500,7 @@ local shop = make("Frame", {
 }, hudGui)
 make("Frame", { Size = UDim2.new(0, 4, 1, 0), BackgroundColor3 = PANEL_EDGE, BorderSizePixel = 0 }, shop)
 make("Frame", { Position = UDim2.fromOffset(4, 0), Size = UDim2.new(0, 2, 1, 0), BackgroundColor3 = BORDER, BackgroundTransparency = 0.45, BorderSizePixel = 0 }, shop)
-label(shop, {
+local shopTitle = label(shop, {
 	Size = UDim2.new(1, 0, 0, 44),
 	Text = "UNITS",
 	TextSize = 30,
@@ -529,11 +529,13 @@ local placing = false
 local selectedTower = nil           -- placed unit chosen for upgrading
 local towerConns = {}
 
--- ===== Upgrade panel (bottom-left) =====
+-- ===== Refine panel (bottom-left): in-match upgrades, targeting, sell =====
+local ABILITY_COLORS = { Burn = rgb(255, 150, 60), Slow = rgb(110, 210, 255) }
+
 local upPanel = pixelPanel(hudGui, {
 	AnchorPoint = Vector2.new(0, 1),
 	Position = UDim2.new(0, 16, 1, -16),
-	Size = UDim2.fromOffset(300, 356),
+	Size = UDim2.fromOffset(300, 396),
 	Visible = false,
 })
 local upTitle = label(upPanel, {
@@ -562,19 +564,28 @@ local rowRange = statRow(88)
 local rowSpeed = statRow(118)
 local upName = label(upPanel, {
 	Position = UDim2.fromOffset(14, 148),
-	Size = UDim2.new(1, -28, 0, 26),
+	Size = UDim2.new(1, -28, 0, 22),
 	TextSize = 18,
 	TextColor3 = GOLD,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	Text = "",
 })
-local upButton = pixelButton(upPanel, "UPGRADE", UDim2.new(1, -28, 0, 54), UDim2.new(0.5, 0, 0, 202), 24, GREEN_BTN, GREEN_EDGE, WHITE)
+-- the ability the unit has now, or the one the next refine adds
+local abilityLabel = label(upPanel, {
+	Position = UDim2.fromOffset(14, 172),
+	Size = UDim2.new(1, -28, 0, 20),
+	TextSize = 15,
+	TextXAlignment = Enum.TextXAlignment.Left,
+	Text = "",
+})
+local upButton = pixelButton(upPanel, "REFINE", UDim2.new(1, -104, 0, 54), UDim2.new(0, 112, 0, 226), 22, GREEN_BTN, GREEN_EDGE, WHITE)
+local upMaxButton = pixelButton(upPanel, "MAX", UDim2.fromOffset(76, 54), UDim2.new(1, -52, 0, 226), 22, GREEN_BTN, GREEN_EDGE, WHITE)
 
 -- targeting selector:  <  TARGET: FIRST  >
-local targetPrev = pixelButton(upPanel, "<", UDim2.fromOffset(40, 40), UDim2.new(0, 34, 0, 258), 24)
-local targetNext = pixelButton(upPanel, ">", UDim2.fromOffset(40, 40), UDim2.new(1, -34, 0, 258), 24)
+local targetPrev = pixelButton(upPanel, "<", UDim2.fromOffset(40, 40), UDim2.new(0, 34, 0, 298), 24)
+local targetNext = pixelButton(upPanel, ">", UDim2.fromOffset(40, 40), UDim2.new(1, -34, 0, 298), 24)
 local targetLabel = label(upPanel, {
-	Position = UDim2.fromOffset(60, 238),
+	Position = UDim2.fromOffset(60, 278),
 	Size = UDim2.new(1, -120, 0, 40),
 	BackgroundTransparency = 0,
 	BackgroundColor3 = PANEL_EDGE,
@@ -584,7 +595,7 @@ local targetLabel = label(upPanel, {
 })
 
 -- sell button
-local sellButton = pixelButton(upPanel, "SELL", UDim2.new(1, -28, 0, 50), UDim2.new(0.5, 0, 0, 316), 22, RED_BTN, RED_EDGE, WHITE)
+local sellButton = pixelButton(upPanel, "SELL", UDim2.new(1, -28, 0, 50), UDim2.new(0.5, 0, 0, 356), 22, RED_BTN, RED_EDGE, WHITE)
 
 local function statText(name, cur, nxt, fn)
 	if nxt ~= nil and nxt ~= cur then
@@ -593,6 +604,11 @@ local function statText(name, cur, nxt, fn)
 	return ("%s  %s"):format(name, fn(cur))
 end
 local function fmtNum(v) return tostring(v) end
+
+local function sameAbility(a, b)
+	if a == nil or b == nil then return a == b end
+	return a.Kind == b.Kind and a.Dps == b.Dps and a.Pct == b.Pct and a.Duration == b.Duration
+end
 
 local function refreshUpgradePanel()
 	if not selectedTower or not selectedTower.Parent then
@@ -614,6 +630,17 @@ local function refreshUpgradePanel()
 		return txt .. "s"
 	end)
 
+	-- ability: "NEW: ..." when the next refine adds or changes one, otherwise the current one
+	if nxt and nxt.Ability and not sameAbility(cur.Ability, nxt.Ability) then
+		abilityLabel.Text = "NEXT: " .. Config.DescribeAbility(nxt.Ability)
+		abilityLabel.TextColor3 = GREEN
+	elseif cur.Ability then
+		abilityLabel.Text = Config.DescribeAbility(cur.Ability)
+		abilityLabel.TextColor3 = ABILITY_COLORS[cur.Ability.Kind] or WHITE
+	else
+		abilityLabel.Text = ""
+	end
+
 	local mine = selectedTower:GetAttribute("OwnerId") == player.UserId
 
 	-- targeting + sell info
@@ -625,18 +652,21 @@ local function refreshUpgradePanel()
 	setButtonColor(sellButton, mine and RED_BTN or GREY_BTN)
 
 	if not nxt then
-		upName.Text = "FULLY UPGRADED!"
+		upName.Text = "FULLY REFINED!"
 		upButton.Text = "MAX LEVEL"
 		setButtonColor(upButton, GREY_BTN)
+		setButtonColor(upMaxButton, GREY_BTN)
 	elseif not mine then
 		upName.Text = "Belongs to another player"
 		upButton.Text = "LOCKED"
 		setButtonColor(upButton, GREY_BTN)
+		setButtonColor(upMaxButton, GREY_BTN)
 	else
 		upName.Text = "NEXT: " .. string.upper(nxt.Name)
-		upButton.Text = "UPGRADE  $" .. fmt(nxt.Cost)
+		upButton.Text = "REFINE  $" .. fmt(nxt.Cost)
 		local affordable = (player:GetAttribute("Money") or 0) >= nxt.Cost
 		setButtonColor(upButton, affordable and GREEN_BTN or rgb(150, 80, 70))
+		setButtonColor(upMaxButton, affordable and GREEN_BTN or rgb(150, 80, 70))
 	end
 end
 
@@ -662,17 +692,19 @@ local function selectTower(model)
 	refreshUpgradePanel()
 end
 
+-- all = true: REFINE MAX (buy as many levels as you can afford)
 local upgrading = false
-local function tryUpgrade()
+local function tryUpgrade(all)
 	if not selectedTower or upgrading then return end
 	upgrading = true
 	local ok, success, reason = pcall(function()
-		return upgradeTowerRemote:InvokeServer(selectedTower)
+		return upgradeTowerRemote:InvokeServer(selectedTower, all == true)
 	end)
 	upgrading = false
-	if ok and not success then notify(reason or "Cannot upgrade") end
+	if ok and not success then notify(reason or "Cannot refine") end
 end
-upButton.MouseButton1Click:Connect(tryUpgrade)
+upButton.MouseButton1Click:Connect(function() tryUpgrade(false) end)
+upMaxButton.MouseButton1Click:Connect(function() tryUpgrade(true) end)
 upClose.MouseButton1Click:Connect(deselectTower)
 
 -- sell (returns half of everything spent on the unit)
@@ -701,17 +733,40 @@ targetPrev.MouseButton1Click:Connect(function() cycleTarget(-1) end)
 targetNext.MouseButton1Click:Connect(function() cycleTarget(1) end)
 
 -- ===== Shop cards (with a pixel-art portrait) =====
+-- how many units I have on the map: total, { [unitName] = n }
+local function myPlaced()
+	local total, byUnit = 0, {}
+	for _, m in ipairs(towersFolder:GetChildren()) do
+		if m:GetAttribute("OwnerId") == player.UserId then
+			total += 1
+			local n = m:GetAttribute("UnitName")
+			if n then byUnit[n] = (byUnit[n] or 0) + 1 end
+		end
+	end
+	return total, byUnit
+end
+
 local function refreshCards()
 	local money = player:GetAttribute("Money") or 0
+	local placed, byUnit = myPlaced()
+	local full = placed >= Config.MaxPlacedPerPlayer
+	shopTitle.Text = ("UNITS %d/%d"):format(placed, Config.MaxPlacedPerPlayer)
+	shopTitle.TextColor3 = full and RED or GOLD
 	for name, card in pairs(cards) do
-		local affordable = money >= Config.Units[name].Cost
+		local unit = Config.Units[name]
+		local limited = unit.PlaceLimit ~= nil and (byUnit[name] or 0) >= unit.PlaceLimit
+		local usable = money >= unit.Cost and not full and not limited
 		card.Button.Visible = ownsUnit(name)
-		card.Cost.TextColor3 = affordable and GOLD or RED
-		card.Button.BackgroundColor3 = affordable and PANEL_LIGHT or rgb(36, 42, 62)
+		card.Cost.Text = "$" .. fmt(unit.Cost)
+			.. (unit.PlaceLimit and ("  %d/%d"):format(byUnit[name] or 0, unit.PlaceLimit) or "")
+		card.Cost.TextColor3 = usable and GOLD or RED
+		card.Button.BackgroundColor3 = usable and PANEL_LIGHT or rgb(36, 42, 62)
 		card.Stroke.Color = (selectedUnit == name) and GOLD or PANEL_EDGE
 		card.Stroke.Thickness = (selectedUnit == name) and 4 or 3
 	end
 end
+towersFolder.ChildAdded:Connect(function() refreshCards() end)
+towersFolder.ChildRemoved:Connect(function() refreshCards() end)
 
 local function updateHint()
 	local prep = currentState() == "Playing" and workspace:GetAttribute("Phase") == "Prep"

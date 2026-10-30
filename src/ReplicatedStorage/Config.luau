@@ -7,9 +7,10 @@ local Config = {}
 Config.StartMoney = 650
 Config.StartLives = 100
 Config.TotalRounds = 15
-Config.RewardPerPop = 5        -- money per whole enemy health point removed
-Config.RoundBonus = 200        -- money for reaching round 2 (each following round adds RoundBonusStep more)
-Config.RoundBonusStep = 40
+Config.RewardPerPop = 2        -- money per whole enemy health point removed
+Config.RoundBonus = 160        -- money for reaching round 2 (each following round adds RoundBonusStep more)
+Config.RoundBonusStep = 30     -- (solo full clear: about 13,200 money in total = 2.6 maxed Herobrines)
+Config.DebugEconomy = false    -- print every player's income by source (start / pops / round bonus / refunds) when a stage ends
 Config.PrepTime = 60           -- seconds of preparation before the match starts (players can also press START MATCH)
 Config.MaxSpawnTime = 36       -- a wave spawns all of its enemies within this many seconds (x1 speed); big waves spawn faster
 Config.EnemiesBase = 6         -- enemies in a wave = EnemiesBase + round * EnemiesPerRound (rounded)
@@ -34,13 +35,18 @@ Config.GroundY = 0
 Config.PathTop = 0.4
 Config.PathWidth = 10
 Config.TowerSpacing = 6        -- minimum distance between two units
+Config.MaxPlacedPerPlayer = 8  -- units one player can have on the map at once (a unit can also set its own PlaceLimit)
 Config.Bounds = { MinX = -78, MaxX = 78, MinZ = -42, MaxZ = 42 }
 
 -- ===== Units (towers) =====
 -- Each name must match a sprite in ReplicatedStorage.PixelArt.
--- Levels[1] is the stats when placed. Every following entry is an upgrade:
---   Cost = price of that upgrade, Name = shown in the upgrade panel,
---   Damage / Range / Cooldown = the unit's NEW stats after buying it (Cooldown is shown as SPA, seconds per attack).
+-- Levels[1] is the stats when placed. Every following entry is a REFINE (in-match upgrade):
+--   Cost = price of that refine, Name = shown in the refine panel,
+--   Damage / Range / Cooldown = the unit's NEW stats after buying it (Cooldown is shown as SPA, seconds per attack),
+--   Ability = optional effect every hit applies from that level on (see Config.DescribeAbility):
+--     { Kind = "Burn", Dps = n, Duration = s }  damage over time (money is paid for burn damage too)
+--     { Kind = "Slow", Pct = 0.3, Duration = s } walks Pct slower (the line behind it slows down too)
+-- PlaceLimit = optional: at most this many of the unit on the map per player.
 Config.UnitOrder = { "Herobrine", "Voidseer" }
 Config.Units = {
 	Herobrine = {
@@ -51,21 +57,26 @@ Config.Units = {
 			{ Damage = 2, Range = 30, Cooldown = 0.6 },
 			{ Cost = 300, Name = "Longer Gaze", Damage = 2, Range = 36, Cooldown = 0.6 },
 			{ Cost = 600, Name = "Rapid Gaze", Damage = 3, Range = 36, Cooldown = 0.45 },
-			{ Cost = 1200, Name = "Burning Gaze", Damage = 4, Range = 40, Cooldown = 0.35 },
-			{ Cost = 2500, Name = "Ultimate Herobrine", Damage = 6, Range = 46, Cooldown = 0.25 },
+			{ Cost = 1200, Name = "Burning Gaze", Damage = 4, Range = 40, Cooldown = 0.35,
+				Ability = { Kind = "Burn", Dps = 1, Duration = 2 } },
+			{ Cost = 2500, Name = "Ultimate Herobrine", Damage = 6, Range = 46, Cooldown = 0.25,
+				Ability = { Kind = "Burn", Dps = 2, Duration = 2.5 } },
 		},
 	},
 	-- Legendary test unit: strong from the start, about 2.5x Herobrine's damage per second at every level
 	Voidseer = {
 		Rarity = "Legendary",
 		Cost = 900,
+		PlaceLimit = 2,
 		BeamColor = Color3.fromRGB(140, 100, 255),
 		Levels = {
 			{ Damage = 4, Range = 38, Cooldown = 0.5 },
 			{ Cost = 700, Name = "Focused Sight", Damage = 5, Range = 42, Cooldown = 0.45 },
 			{ Cost = 1400, Name = "Void Pulse", Damage = 7, Range = 46, Cooldown = 0.38 },
-			{ Cost = 2800, Name = "Violet Burst", Damage = 10, Range = 50, Cooldown = 0.3 },
-			{ Cost = 5000, Name = "Boundless Void", Damage = 15, Range = 56, Cooldown = 0.2 },
+			{ Cost = 2800, Name = "Violet Burst", Damage = 10, Range = 50, Cooldown = 0.3,
+				Ability = { Kind = "Slow", Pct = 0.2, Duration = 1 } },
+			{ Cost = 5000, Name = "Boundless Void", Damage = 15, Range = 56, Cooldown = 0.2,
+				Ability = { Kind = "Slow", Pct = 0.35, Duration = 1.5 } },
 		},
 	},
 }
@@ -90,6 +101,18 @@ Config.Rarities = {
 function Config.RarityOf(unitName)
 	local unit = Config.Units[unitName]
 	return Config.Rarities[unit and unit.Rarity or "Rare"] or Config.Rarities.Rare
+end
+
+-- Short text for an ability, e.g. "BURN 2/S FOR 2.5S" (nil when there is none)
+function Config.DescribeAbility(ability)
+	if not ability then return nil end
+	local function num(v) return (("%.2f"):format(v):gsub("0+$", ""):gsub("%.$", "")) end
+	if ability.Kind == "Burn" then
+		return ("BURN %s/S FOR %sS"):format(num(ability.Dps), num(ability.Duration))
+	elseif ability.Kind == "Slow" then
+		return ("SLOW %d%% FOR %sS"):format(math.floor(ability.Pct * 100 + 0.5), num(ability.Duration))
+	end
+	return string.upper(tostring(ability.Kind))
 end
 
 function Config.MaxLevel(unitName)
