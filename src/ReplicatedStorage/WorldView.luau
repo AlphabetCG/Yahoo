@@ -383,7 +383,7 @@ local function updateTowerLevel(vis)
 	local level = vis.model:GetAttribute("Level") or 1
 	vis.level = level
 	local isMax = level >= Config.MaxLevel(vis.unit)
-	vis.label.Text = isMax and "MAX" or ("LV" .. level)
+	vis.label.Text = isMax and "MAX" or ("R" .. level) -- refine level (in-match upgrades)
 	vis.label.TextColor3 = isMax and rgb(255, 214, 84) or WHITE
 end
 
@@ -488,7 +488,8 @@ function WorldView.clearGhost()
 	end
 end
 
-function WorldView.setGhost(unitName)
+-- unitLevel = account level of the copy being placed (its range grows with level)
+function WorldView.setGhost(unitName, unitLevel)
 	WorldView.clearGhost()
 	if not unitName or not Config.Units[unitName] then return end
 	local w, h = PixelArt.size(unitName)
@@ -510,7 +511,7 @@ function WorldView.setGhost(unitName)
 	end
 	ghost = {
 		container = container,
-		ring = makeRing(Config.Units[unitName].Levels[1].Range, WHITE),
+		ring = makeRing(Config.ScaledStats(unitName, 1, unitLevel).Range, WHITE),
 		orig = orig,
 		w = w,
 		h = h,
@@ -686,7 +687,7 @@ function WorldView.update(dt)
 			if selected.level ~= vis.level then
 				selected.level = vis.level
 				if selected.ring then selected.ring.holder:Destroy() end
-				local stats = Config.GetStats(vis.unit, vis.level)
+				local stats = Config.ScaledStats(vis.unit, vis.level, vis.model:GetAttribute("UnitLevel"))
 				selected.ring = makeRing(stats and stats.Range or 10, WHITE)
 			end
 			placeRing(selected.ring, p.X, p.Z)
