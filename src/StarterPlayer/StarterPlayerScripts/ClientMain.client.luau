@@ -1169,24 +1169,46 @@ local function refreshInventory()
 	local canSummon = profile ~= nil and profile.Gems >= Config.Summon.Cost
 	setButtonColor(summonButton, canSummon and GREEN_BTN or GREY_BTN)
 
+	-- one card per owned unit (duplicates are separate units, never stacked),
+	-- sorted rarest first, then highest level, then newest; unowned units follow as LOCKED cards
 	clearGui(unitsScroll)
-	for i, name in ipairs(Config.UnitOrder) do
-		local unit = Config.Units[name]
-		local base = unit.Levels[1]
-		local copies = unitCount(name)
+	local owned = {}
+	if profile then
+		for _, u in pairs(profile.Units) do
+			if Config.Units[u.Name] then table.insert(owned, u) end
+		end
+	end
+	table.sort(owned, function(a, b)
+		local ra, rb = Config.RarityOf(a.Name).Order, Config.RarityOf(b.Name).Order
+		if ra ~= rb then return ra > rb end
+		if a.Level ~= b.Level then return a.Level > b.Level end
+		if (a.Obtained or 0) ~= (b.Obtained or 0) then return (a.Obtained or 0) > (b.Obtained or 0) end
+		return a.Id < b.Id
+	end)
+
+	local function unitCard(order, name, instance)
+		local base = Config.Units[name].Levels[1]
 		local rarity = Config.RarityOf(name)
-		local card = make("Frame", { LayoutOrder = i, BackgroundColor3 = copies > 0 and PANEL_LIGHT or rgb(36, 42, 62), BorderSizePixel = 0 }, unitsScroll)
-		make("UIStroke", { Color = copies > 0 and rarity.Color or PANEL_EDGE, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, card)
+		local card = make("Frame", { LayoutOrder = order, BackgroundColor3 = instance and PANEL_LIGHT or rgb(36, 42, 62), BorderSizePixel = 0 }, unitsScroll)
+		make("UIStroke", { Color = instance and rarity.Color or PANEL_EDGE, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, card)
 		makePortrait(card, name)
 		label(card, { Position = UDim2.fromOffset(0, 92), Size = UDim2.new(1, 0, 0, 24), Text = string.upper(name), TextSize = 20, TextColor3 = rarity.Color })
 		label(card, {
 			Position = UDim2.fromOffset(0, 116), Size = UDim2.new(1, 0, 0, 24),
-			Text = copies > 0 and ("OWNED x" .. copies) or "LOCKED",
-			TextSize = 18, TextColor3 = copies > 0 and GOLD or RED,
+			Text = instance and ("LV " .. instance.Level .. "  " .. string.upper(Config.Units[name].Rarity or "")) or "LOCKED",
+			TextSize = 18, TextColor3 = instance and GOLD or RED,
 		})
 		label(card, { Position = UDim2.fromOffset(0, 140), Size = UDim2.new(1, 0, 0, 20), Text = ("DMG %d   RNG %d"):format(base.Damage, base.Range), TextSize = 14, TextColor3 = TEXT_DIM })
 		label(card, { Position = UDim2.fromOffset(0, 160), Size = UDim2.new(1, 0, 0, 20), Text = "SPA " .. spaText(base.Cooldown), TextSize = 14, TextColor3 = TEXT_DIM })
 	end
+
+	for i, u in ipairs(owned) do
+		unitCard(i, u.Name, u)
+	end
+	for i, name in ipairs(Config.UnitOrder) do
+		if unitCount(name) == 0 then unitCard(#owned + i, name, nil) end
+	end
+	unitsTab.Text = ("UNITS %d/%d"):format(#owned, Config.MaxUnitsOwned)
 
 	clearGui(materialsScroll)
 	for i, key in ipairs(Config.MaterialOrder) do
@@ -1225,7 +1247,7 @@ summonButton.MouseButton1Click:Connect(function()
 	summoning = false
 	if ok and typeof(result) == "table" then
 		summonResult.TextColor3 = Config.RarityOf(result.Unit).Color
-		summonResult.Text = ("Summoned %s %s!  %s"):format(string.upper(result.Rarity or ""), string.upper(result.Unit), result.New and "NEW UNIT" or ("now x" .. result.Copies))
+		summonResult.Text = ("Summoned %s %s!  %s"):format(string.upper(result.Rarity or ""), string.upper(result.Unit), result.New and "NEW UNIT" or "ADDED AS A NEW CARD")
 	else
 		summonResult.TextColor3 = RED
 		summonResult.Text = tostring(result or "Summon failed")
