@@ -383,7 +383,7 @@ local function updateTowerLevel(vis)
 	local level = vis.model:GetAttribute("Level") or 1
 	vis.level = level
 	local isMax = level >= Config.MaxLevel(vis.unit)
-	vis.label.Text = isMax and "MAX" or ("R" .. level) -- refine level (in-match upgrades)
+	vis.label.Text = isMax and "MAX" or ("UP" .. level) -- in-match upgrade level
 	vis.label.TextColor3 = isMax and rgb(255, 214, 84) or WHITE
 end
 

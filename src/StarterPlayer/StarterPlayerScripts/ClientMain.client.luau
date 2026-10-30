@@ -668,7 +668,7 @@ local abilityLabel = label(upPanel, {
 	TextXAlignment = Enum.TextXAlignment.Left,
 	Text = "",
 })
-local upButton = pixelButton(upPanel, "REFINE", UDim2.new(1, -104, 0, 54), UDim2.new(0, 112, 0, 226), 22, GREEN_BTN, GREEN_EDGE, WHITE)
+local upButton = pixelButton(upPanel, "UPGRADE", UDim2.new(1, -104, 0, 54), UDim2.new(0, 112, 0, 226), 20, GREEN_BTN, GREEN_EDGE, WHITE)
 local upMaxButton = pixelButton(upPanel, "MAX", UDim2.fromOffset(76, 54), UDim2.new(1, -52, 0, 226), 22, GREEN_BTN, GREEN_EDGE, WHITE)
 
 -- targeting selector:  <  TARGET: FIRST  >
@@ -713,7 +713,7 @@ local function refreshUpgradePanel()
 	local nxt = Config.ScaledStats(unitName, level + 1, unitLevel)
 
 	upPanel.Visible = true
-	upTitle.Text = ("%s  LV%d  R%d"):format(string.upper(unitName), unitLevel, level)
+	upTitle.Text = ("%s  LV%d  UP%d"):format(string.upper(unitName), unitLevel, level)
 	rowDamage.Text = statText("DAMAGE", cur.Damage, nxt and nxt.Damage, fmtNum)
 	rowRange.Text = statText("RANGE ", cur.Range, nxt and nxt.Range, fmtNum)
 	rowSpeed.Text = statText("SPA   ", cur.Cooldown, nxt and nxt.Cooldown, function(v)
@@ -743,7 +743,7 @@ local function refreshUpgradePanel()
 	setButtonColor(sellButton, mine and RED_BTN or GREY_BTN)
 
 	if not nxt then
-		upName.Text = "FULLY REFINED!"
+		upName.Text = "FULLY UPGRADED!"
 		upButton.Text = "MAX LEVEL"
 		setButtonColor(upButton, GREY_BTN)
 		setButtonColor(upMaxButton, GREY_BTN)
@@ -754,7 +754,7 @@ local function refreshUpgradePanel()
 		setButtonColor(upMaxButton, GREY_BTN)
 	else
 		upName.Text = "NEXT: " .. string.upper(nxt.Name)
-		upButton.Text = "REFINE  $" .. fmt(nxt.Cost)
+		upButton.Text = "UPGRADE  $" .. fmt(nxt.Cost)
 		local affordable = (player:GetAttribute("Money") or 0) >= nxt.Cost
 		setButtonColor(upButton, affordable and GREEN_BTN or rgb(150, 80, 70))
 		setButtonColor(upMaxButton, affordable and GREEN_BTN or rgb(150, 80, 70))
@@ -792,7 +792,7 @@ local function tryUpgrade(all)
 		return Remote.UpgradeTower:InvokeServer(selectedTower, all == true)
 	end)
 	upgrading = false
-	if ok and not success then notify(reason or "Cannot refine") end
+	if ok and not success then notify(reason or "Cannot upgrade") end
 end
 upButton.MouseButton1Click:Connect(function() tryUpgrade(false) end)
 upMaxButton.MouseButton1Click:Connect(function() tryUpgrade(true) end)
@@ -1643,7 +1643,7 @@ local function buildInventory()
 		dRange.Text = "RANGE   " .. fmtNum(stats.Range)
 		dSpeed.Text = "SPA     " .. spaText(stats.Cooldown)
 		local abilityLevel, ability = firstAbility(name)
-		dAbility.Text = ability and ("R%d: %s"):format(abilityLevel, Config.DescribeAbility(ability)) or ""
+		dAbility.Text = ability and ("UP%d: %s"):format(abilityLevel, Config.DescribeAbility(ability)) or ""
 
 		local slot = loadoutSlotOf(u.Id)
 		if pickingSlotFor == u.Id then
