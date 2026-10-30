@@ -34,9 +34,60 @@ local beginMatchRemote = newRemote("RemoteEvent", "BeginMatch")
 local retryRemote = newRemote("RemoteEvent", "Retry")
 local shotRemote = newRemote("UnreliableRemoteEvent", "Shot") -- tells clients to draw a shot
 
--- saved player data: settings, gems, units, materials (adds its own remotes to the Remotes folder)
+-- saved player data: settings, gems, units, items (adds its own remotes to the Remotes folder)
 local PlayerData = require(script.Parent:WaitForChild("PlayerData"))
+local RateLimit = require(script.Parent:WaitForChild("RateLimit"))
 PlayerData.init(remotes)
+
+-- ===== Host =====
+-- The host is the player who has been in the server the longest. Only the host controls the match
+-- flow (start, retry, menu, surrender, speed, auto skip). Shown to clients as workspace.HostId.
+local joinOrder = {}
+
+local function isHost(player)
+	return player.UserId == workspace:GetAttribute("HostId")
+end
+
+-- the match follows the host's saved Auto Skip choice
+local function applyHostSettings()
+	local host = joinOrder[1]
+	local profile = host and PlayerData.Get(host)
+	if profile then
+		workspace:SetAttribute("AutoSkip", profile.Settings.AutoSkip)
+	end
+end
+
+local function updateHost()
+	local host = joinOrder[1]
+	local newId = host and host.UserId or 0
+	if workspace:GetAttribute("HostId") ~= newId then
+		workspace:SetAttribute("HostId", newId)
+		applyHostSettings()
+	end
+end
+
+Players.PlayerAdded:Connect(function(player)
+	if not table.find(joinOrder, player) then table.insert(joinOrder, player) end
+	updateHost()
+end)
+for _, p in ipairs(Players:GetPlayers()) do
+	if not table.find(joinOrder, p) then table.insert(joinOrder, p) end
+end
+Players.PlayerRemoving:Connect(function(player)
+	local idx = table.find(joinOrder, player)
+	if idx then table.remove(joinOrder, idx) end
+	updateHost()
+end)
+PlayerData.OnProfileLoaded(function(player)
+	if isHost(player) then applyHostSettings() end
+end)
+workspace:SetAttribute("HostId", 0)
+updateHost()
+
+-- Match-flow remotes: only the host, at most 2 requests per second
+local function hostRequest(player, key)
+	return isHost(player) and RateLimit.allow(player, key, 2)
+end
 
 -- ===== World objects =====
 local towersFolder = workspace:FindFirstChild("Towers")
@@ -339,7 +390,7 @@ end
 
 -- Units are invisible markers on the server (a model with one flat part).
 -- Every client draws the pixel-art sprite itself from the model's attributes.
-local function createTower(player, unitName, pos)
+local function createTower(player, unitName, pos, instance)
 	local unit = Config.Units[unitName]
 	if not unit then return nil end
 	local model = Instance.new("Model")
@@ -363,6 +414,7 @@ local function createTower(player, unitName, pos)
 	model:SetAttribute("OwnerId", player.UserId)
 	model:SetAttribute("Targeting", "First")
 	model:SetAttribute("Spent", unit.Cost)
+	model:SetAttribute("UnitId", instance and instance.Id or "")
 
 	model.Parent = towersFolder
 	local entry = {
@@ -376,28 +428,34 @@ local function createTower(player, unitName, pos)
 		Mode = "First",
 		Spent = unit.Cost,
 		Owner = player,
+		UnitId = instance and instance.Id,
 	}
 	table.insert(towers, entry)
 	towerByModel[model] = entry
 	return model
 end
 
-placeTowerRemote.OnServerInvoke = function(player, unitName, pos)
+-- unitId = the id of one of the player's saved unit instances (profile.Units)
+placeTowerRemote.OnServerInvoke = function(player, unitId, pos)
+	if not RateLimit.allow(player, "PlaceTower", 10) then return false, "Slow down" end
 	if workspace:GetAttribute("State") ~= "Playing" then return false, "Game is not running" end
-	if typeof(unitName) ~= "string" or typeof(pos) ~= "Vector3" then return false, "Bad request" end
+	if typeof(unitId) ~= "string" or typeof(pos) ~= "Vector3" then return false, "Bad request" end
+	local instance = PlayerData.GetUnit(player, unitId)
+	if not instance then return false, "You do not own this unit" end
+	local unitName = instance.Name
 	local unit = Config.Units[unitName]
 	if not unit then return false, "Unknown unit" end
-	if not PlayerData.Owns(player, unitName) then return false, "You do not own this unit" end
 	local money = player:GetAttribute("Money") or 0
 	if money < unit.Cost then return false, "Not enough money" end
 	local ok, reason = Config.CanPlace(pos, towersFolder)
 	if not ok then return false, reason end
 	player:SetAttribute("Money", money - unit.Cost)
-	createTower(player, unitName, pos)
+	createTower(player, unitName, pos, instance)
 	return true
 end
 
 upgradeTowerRemote.OnServerInvoke = function(player, model)
+	if not RateLimit.allow(player, "UpgradeTower", 10) then return false, "Slow down" end
 	if workspace:GetAttribute("State") ~= "Playing" then return false, "Game is not running" end
 	if typeof(model) ~= "Instance" then return false, "Bad request" end
 	local t = towerByModel[model]
@@ -415,14 +473,12 @@ upgradeTowerRemote.OnServerInvoke = function(player, model)
 	model:SetAttribute("Spent", t.Spent)
 	t.Stats = nextStats
 	model:SetAttribute("Level", nextLevel)
-	if t.LevelLabel then
-		t.LevelLabel.Text = (nextLevel >= Config.MaxLevel(t.UnitName)) and "MAX" or ("LV " .. nextLevel)
-	end
 	return true
 end
 
 -- Selling returns Config.SellRefund (50%) of everything spent on the unit (placement + upgrades)
 sellTowerRemote.OnServerInvoke = function(player, model)
+	if not RateLimit.allow(player, "SellTower", 10) then return false, "Slow down" end
 	if workspace:GetAttribute("State") ~= "Playing" then return false, "Game is not running" end
 	if typeof(model) ~= "Instance" then return false, "Bad request" end
 	local t = towerByModel[model]
@@ -439,6 +495,7 @@ end
 
 -- Targeting mode: First / Last / Strongest / Weakest / Closest / None
 setTargetingRemote.OnServerEvent:Connect(function(player, model, mode)
+	if not RateLimit.allow(player, "SetTargeting", 10) then return end
 	if workspace:GetAttribute("State") ~= "Playing" then return end
 	if typeof(model) ~= "Instance" or typeof(mode) ~= "string" then return end
 	if not table.find(Config.TargetModes, mode) then return end
@@ -553,9 +610,12 @@ local function startGame()
 	end)
 end
 
-startGameRemote.OnServerEvent:Connect(startGame)
+startGameRemote.OnServerEvent:Connect(function(player)
+	if hostRequest(player, "StartGame") then startGame() end
+end)
 
-returnToMenuRemote.OnServerEvent:Connect(function()
+returnToMenuRemote.OnServerEvent:Connect(function(player)
+	if not hostRequest(player, "ReturnToMenu") then return end
 	local state = workspace:GetAttribute("State")
 	if state == "GameOver" or state == "Victory" then
 		goToMenu()
@@ -563,14 +623,16 @@ returnToMenuRemote.OnServerEvent:Connect(function()
 end)
 
 -- Surrender: ends the stage immediately and shows the STAGE FAILED screen
-surrenderRemote.OnServerEvent:Connect(function()
+surrenderRemote.OnServerEvent:Connect(function(player)
+	if not hostRequest(player, "Surrender") then return end
 	if workspace:GetAttribute("State") == "Playing" then
 		endGame("GameOver", "Surrender")
 	end
 end)
 
 -- Retry (from the stage clear / failed screen): reset everything and start a fresh prep phase
-retryRemote.OnServerEvent:Connect(function()
+retryRemote.OnServerEvent:Connect(function(player)
+	if not hostRequest(player, "Retry") then return end
 	local state = workspace:GetAttribute("State")
 	if state == "GameOver" or state == "Victory" then
 		goToMenu()
@@ -581,7 +643,8 @@ end)
 -- Phase inside a game: "Prep" = place units + START MATCH button / countdown, "Match" = rounds running
 workspace:SetAttribute("Phase", "Menu")
 workspace:SetAttribute("PrepLeft", 0)
-beginMatchRemote.OnServerEvent:Connect(function()
+beginMatchRemote.OnServerEvent:Connect(function(player)
+	if not hostRequest(player, "BeginMatch") then return end
 	if workspace:GetAttribute("State") == "Playing" and workspace:GetAttribute("Phase") == "Prep" then
 		matchRequested = true
 	end
@@ -589,16 +652,21 @@ end)
 
 -- Auto skip: ON = next round starts when ~60-70% of the wave has appeared,
 --            OFF = next round only starts when the wave's own timer runs out
-workspace:SetAttribute("AutoSkip", Config.AutoSkipDefault)
+-- Everyone's choice is saved; only the host's choice drives the match.
+if workspace:GetAttribute("AutoSkip") == nil then
+	workspace:SetAttribute("AutoSkip", Config.AutoSkipDefault)
+end
 setAutoSkipRemote.OnServerEvent:Connect(function(player, value)
-	if typeof(value) == "boolean" then
+	if typeof(value) ~= "boolean" or not RateLimit.allow(player, "SetAutoSkip", 2) then return end
+	PlayerData.SetSetting(player, "AutoSkip", value) -- remembered between sessions
+	if isHost(player) then
 		workspace:SetAttribute("AutoSkip", value)
-		PlayerData.SetSetting(player, "AutoSkip", value) -- remembered between sessions
 	end
 end)
 
 -- Game speed (x1 / x2 / x3)
-setSpeedRemote.OnServerEvent:Connect(function(_, speed)
+setSpeedRemote.OnServerEvent:Connect(function(player, speed)
+	if not hostRequest(player, "SetSpeed") then return end
 	if workspace:GetAttribute("State") ~= "Playing" then return end
 	if table.find(Config.SpeedOptions, speed) then
 		publishStage()
