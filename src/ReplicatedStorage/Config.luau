@@ -35,7 +35,7 @@ Config.GroundY = 0
 Config.PathTop = 0.4
 Config.PathWidth = 10
 Config.TowerSpacing = 6        -- minimum distance between two units
-Config.MaxPlacedPerPlayer = 8  -- units one player can have on the map at once (a unit can also set its own PlaceLimit)
+Config.DefaultPlaceLimit = 3   -- each unit can be on the map at most this many times per player (a unit can set its own PlaceLimit)
 Config.Bounds = { MinX = -78, MaxX = 78, MinZ = -42, MaxZ = 42 }
 
 -- ===== Units (towers) =====
@@ -46,7 +46,7 @@ Config.Bounds = { MinX = -78, MaxX = 78, MinZ = -42, MaxZ = 42 }
 --   Ability = optional effect every hit applies from that level on (see Config.DescribeAbility):
 --     { Kind = "Burn", Dps = n, Duration = s }  damage over time (money is paid for burn damage too)
 --     { Kind = "Slow", Pct = 0.3, Duration = s } walks Pct slower (the line behind it slows down too)
--- PlaceLimit = optional: at most this many of the unit on the map per player.
+-- PlaceLimit = optional: overrides Config.DefaultPlaceLimit for this unit (copies on the map per player).
 Config.UnitOrder = { "Herobrine", "Voidseer" }
 Config.Units = {
 	Herobrine = {
@@ -67,7 +67,6 @@ Config.Units = {
 	Voidseer = {
 		Rarity = "Legendary",
 		Cost = 900,
-		PlaceLimit = 2,
 		BeamColor = Color3.fromRGB(140, 100, 255),
 		Levels = {
 			{ Damage = 4, Range = 38, Cooldown = 0.5 },
@@ -113,6 +112,12 @@ function Config.DescribeAbility(ability)
 		return ("SLOW %d%% FOR %sS"):format(math.floor(ability.Pct * 100 + 0.5), num(ability.Duration))
 	end
 	return string.upper(tostring(ability.Kind))
+end
+
+-- How many copies of a unit one player may have on the map at once
+function Config.PlaceLimit(unitName)
+	local unit = Config.Units[unitName]
+	return (unit and unit.PlaceLimit) or Config.DefaultPlaceLimit
 end
 
 function Config.MaxLevel(unitName)

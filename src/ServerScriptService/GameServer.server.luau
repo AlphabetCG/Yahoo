@@ -565,18 +565,16 @@ placeTowerRemote.OnServerInvoke = function(player, unitId, pos)
 	if not unit then return false, "Unknown unit" end
 	local money = player:GetAttribute("Money") or 0
 	if money < unit.Cost then return false, "Not enough money" end
-	local placed, placedOfUnit = 0, 0
+	-- each unit can be on the map at most Config.PlaceLimit(unitName) times per player
+	local placedOfUnit = 0
 	for _, t in ipairs(towers) do
-		if t.Owner == player and t.Model.Parent then
-			placed += 1
-			if t.UnitName == unitName then placedOfUnit += 1 end
+		if t.Owner == player and t.Model.Parent and t.UnitName == unitName then
+			placedOfUnit += 1
 		end
 	end
-	if placed >= Config.MaxPlacedPerPlayer then
-		return false, ("Unit limit reached (%d)"):format(Config.MaxPlacedPerPlayer)
-	end
-	if unit.PlaceLimit and placedOfUnit >= unit.PlaceLimit then
-		return false, ("Only %d %s allowed"):format(unit.PlaceLimit, unitName)
+	local limit = Config.PlaceLimit(unitName)
+	if placedOfUnit >= limit then
+		return false, ("Only %d %s allowed"):format(limit, unitName)
 	end
 	local ok, reason = Config.CanPlace(pos, towersFolder)
 	if not ok then return false, reason end

@@ -500,7 +500,7 @@ local shop = make("Frame", {
 }, hudGui)
 make("Frame", { Size = UDim2.new(0, 4, 1, 0), BackgroundColor3 = PANEL_EDGE, BorderSizePixel = 0 }, shop)
 make("Frame", { Position = UDim2.fromOffset(4, 0), Size = UDim2.new(0, 2, 1, 0), BackgroundColor3 = BORDER, BackgroundTransparency = 0.45, BorderSizePixel = 0 }, shop)
-local shopTitle = label(shop, {
+label(shop, {
 	Size = UDim2.new(1, 0, 0, 44),
 	Text = "UNITS",
 	TextSize = 30,
@@ -733,32 +733,27 @@ targetPrev.MouseButton1Click:Connect(function() cycleTarget(-1) end)
 targetNext.MouseButton1Click:Connect(function() cycleTarget(1) end)
 
 -- ===== Shop cards (with a pixel-art portrait) =====
--- how many units I have on the map: total, { [unitName] = n }
+-- how many of each unit I have on the map: { [unitName] = n }
 local function myPlaced()
-	local total, byUnit = 0, {}
+	local byUnit = {}
 	for _, m in ipairs(towersFolder:GetChildren()) do
-		if m:GetAttribute("OwnerId") == player.UserId then
-			total += 1
-			local n = m:GetAttribute("UnitName")
-			if n then byUnit[n] = (byUnit[n] or 0) + 1 end
+		local n = m:GetAttribute("UnitName")
+		if n and m:GetAttribute("OwnerId") == player.UserId then
+			byUnit[n] = (byUnit[n] or 0) + 1
 		end
 	end
-	return total, byUnit
+	return byUnit
 end
 
 local function refreshCards()
 	local money = player:GetAttribute("Money") or 0
-	local placed, byUnit = myPlaced()
-	local full = placed >= Config.MaxPlacedPerPlayer
-	shopTitle.Text = ("UNITS %d/%d"):format(placed, Config.MaxPlacedPerPlayer)
-	shopTitle.TextColor3 = full and RED or GOLD
+	local byUnit = myPlaced()
 	for name, card in pairs(cards) do
 		local unit = Config.Units[name]
-		local limited = unit.PlaceLimit ~= nil and (byUnit[name] or 0) >= unit.PlaceLimit
-		local usable = money >= unit.Cost and not full and not limited
+		local limit = Config.PlaceLimit(name)
+		local usable = money >= unit.Cost and (byUnit[name] or 0) < limit
 		card.Button.Visible = ownsUnit(name)
-		card.Cost.Text = "$" .. fmt(unit.Cost)
-			.. (unit.PlaceLimit and ("  %d/%d"):format(byUnit[name] or 0, unit.PlaceLimit) or "")
+		card.Cost.Text = ("$%s  %d/%d"):format(fmt(unit.Cost), byUnit[name] or 0, limit)
 		card.Cost.TextColor3 = usable and GOLD or RED
 		card.Button.BackgroundColor3 = usable and PANEL_LIGHT or rgb(36, 42, 62)
 		card.Stroke.Color = (selectedUnit == name) and GOLD or PANEL_EDGE
