@@ -7,17 +7,22 @@ local Config = {}
 Config.StartMoney = 650
 Config.StartLives = 100
 Config.TotalRounds = 15
-Config.RewardPerPop = 5        -- money per enemy health point removed
+Config.RewardPerPop = 5        -- money per whole enemy health point removed
 Config.RoundBonus = 200        -- money for reaching round 2 (each following round adds RoundBonusStep more)
 Config.RoundBonusStep = 40
 Config.PrepTime = 60           -- seconds of preparation before the match starts (players can also press START MATCH)
 Config.MaxSpawnTime = 36       -- a wave spawns all of its enemies within this many seconds (x1 speed); big waves spawn faster
-Config.EnemiesBase = 8         -- enemies in a wave = EnemiesBase + round * EnemiesPerRound (rounded)
-Config.EnemiesPerRound = 6.4
-Config.SkipSpawnMin = 0.6       -- AUTO SKIP: the next round starts once this share of the wave has appeared
+Config.EnemiesBase = 6         -- enemies in a wave = EnemiesBase + round * EnemiesPerRound (rounded)
+Config.EnemiesPerRound = 3.2   -- (54 enemies in round 15; fewer but tougher, see HpPerRound)
+Config.HpPerRound = 0.09       -- enemy health = Tiers[tier].HP * (1 + HpPerRound * (round - 1))
+Config.SkipSpawnMin = 0.6       -- AUTO SKIP ON: the next round starts once this share of the wave has appeared
 Config.SkipSpawnMax = 0.7       -- (a random value between Min and Max is picked every round)
+Config.WaveClearTime = 20       -- AUTO SKIP OFF: after the last enemy of a wave appears, the next round starts
+                                -- when this many seconds (game time) have passed or every enemy is gone
 Config.AutoSkipDefault = true   -- AUTO SKIP on/off when the game loads (players can toggle it in game)
 Config.SpawnInterval = 1.6     -- seconds between enemies (bigger = slower spawning)
+Config.MinSpawnGap = 2         -- studs: a new enemy waits until the previous one has walked this far
+Config.LaneSpread = 3.5        -- studs: each enemy walks its own lane up to this far left/right of the path center
 Config.SpawnGrace = 0.1        -- real seconds a new enemy stays untargetable, so clients have drawn it before units shoot it
 Config.ShotTravel = 0.12       -- real seconds a shot takes to land; damage is applied when the bolt arrives
 Config.SpeedOptions = { 1, 2, 3 } -- game speed choices (x1, x2, x3)
@@ -94,14 +99,17 @@ function Config.MaxLevel(unitName)
 end
 
 -- ===== Enemy tiers =====
--- An enemy's tier equals its health. Each hit lowers the tier (like popping bloon layers).
+-- The tier an enemy spawns with sets its speed (fixed for its whole life) and its base HP.
+-- Health = HP * (1 + HpPerRound * (round - 1)). As it loses health its color steps down through
+-- the lower tiers (a tier 4 wisp at half health looks like tier 2). Leaking costs lives equal to
+-- the tier it currently shows.
 Config.MaxTier = 5
 Config.Tiers = {
-	[1] = { Color = Color3.fromRGB(220, 60, 60), Speed = 5.5 },
-	[2] = { Color = Color3.fromRGB(60, 120, 230), Speed = 6.5 },
-	[3] = { Color = Color3.fromRGB(70, 190, 70), Speed = 8 },
-	[4] = { Color = Color3.fromRGB(240, 210, 60), Speed = 9 },
-	[5] = { Color = Color3.fromRGB(240, 130, 190), Speed = 11 },
+	[1] = { Color = Color3.fromRGB(220, 60, 60), Speed = 5.5, HP = 1 },
+	[2] = { Color = Color3.fromRGB(60, 120, 230), Speed = 6.5, HP = 2 },
+	[3] = { Color = Color3.fromRGB(70, 190, 70), Speed = 8, HP = 3 },
+	[4] = { Color = Color3.fromRGB(240, 210, 60), Speed = 9, HP = 4 },
+	[5] = { Color = Color3.fromRGB(240, 130, 190), Speed = 11, HP = 5 },
 }
 
 -- ===== Boss =====

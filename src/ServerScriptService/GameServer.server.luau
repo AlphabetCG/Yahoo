@@ -107,6 +107,41 @@ local path = Config.GetPath()
 if #path < 2 then
 	warn("GameServer: Workspace.Waypoints needs at least 2 parts named 1, 2, 3...")
 end
+local pathLength = 0
+for i = 1, #path - 1 do pathLength += (path[i + 1] - path[i]).Magnitude end
+
+-- Each enemy walks its own lane: the path shifted sideways by `offset` studs (corners are mitered
+-- so the lane stays parallel to the path). Returns the lane points and the lane's length.
+local function flatNormal(a, b)
+	local d = Vector3.new(b.X - a.X, 0, b.Z - a.Z)
+	if d.Magnitude < 1e-3 then return Vector3.zero end
+	d = d.Unit
+	return Vector3.new(-d.Z, 0, d.X)
+end
+
+local function buildLane(offset)
+	local n = #path
+	local lane = table.create(n)
+	for i = 1, n do
+		local nIn = i > 1 and flatNormal(path[i - 1], path[i]) or nil
+		local nOut = i < n and flatNormal(path[i], path[i + 1]) or nil
+		local m
+		if nIn and nOut then
+			local sum = nIn + nOut
+			if sum.Magnitude < 1e-3 then
+				m = nOut
+			else
+				m = sum.Unit / math.max(0.5, sum.Unit:Dot(nOut))
+			end
+		else
+			m = nIn or nOut or Vector3.zero
+		end
+		lane[i] = path[i] + m * offset
+	end
+	local length = 0
+	for i = 1, n - 1 do length += (lane[i + 1] - lane[i]).Magnitude end
+	return lane, length
+end
 
 -- ===== Game state (shared with clients through attributes on Workspace) =====
 -- State: "Menu" | "Playing" | "GameOver" | "Victory"
@@ -114,9 +149,13 @@ workspace:SetAttribute("State", "Menu")
 workspace:SetAttribute("Lives", Config.StartLives)
 workspace:SetAttribute("Round", 0)
 workspace:SetAttribute("Countdown", 0)
+workspace:SetAttribute("WaveState", "")   -- "Spawning" | "Clearing" (Auto Skip OFF timer) | ""
+workspace:SetAttribute("WaveSpawned", 0)
+workspace:SetAttribute("WaveCount", 0)
 workspace:SetAttribute("GameSpeed", 1)
 
-local enemies = {}        -- list of { Part, Health, Pending, Born, Index, Dist, Dead }
+local enemies = {}        -- list of enemy entries (see spawnEnemy)
+local lastSpawned = nil   -- the newest enemy (new spawns wait until it has walked Config.MinSpawnGap)
 local stageKills = 0         -- enemies defeated this stage (for the rewards)
 local stageBossKilled = false
 local pendingHits = {}    -- shots in flight: { Enemy, Damage, Owner, Due } (damage lands when the bolt arrives)
@@ -167,6 +206,7 @@ local function clearEnemies()
 		if e.Part then e.Part:Destroy() end
 	end
 	table.clear(enemies)
+	lastSpawned = nil
 	enemiesFolder:ClearAllChildren()
 end
 
@@ -194,6 +234,7 @@ local function endGame(newState, reason)
 	session += 1
 	clearEnemies()
 	workspace:SetAttribute("Countdown", 0)
+	workspace:SetAttribute("WaveState", "")
 	workspace:SetAttribute("GameSpeed", 1)
 	publishStage()
 	workspace:SetAttribute("EndReason", reason or "")
@@ -217,12 +258,22 @@ local function loseLives(amount)
 end
 
 -- ===== Enemies =====
-local function tierInfo(health)
-	return Config.Tiers[math.clamp(health, 1, Config.MaxTier)]
+local function tierInfo(tier)
+	return Config.Tiers[math.clamp(tier, 1, Config.MaxTier)]
 end
 
-local function spawnEnemy(tier, isBoss)
+-- the tier an enemy looks like at its current health (its color steps down as it gets hurt)
+local function shownTier(e)
+	return math.clamp(math.ceil(e.Health / e.MaxHealth * e.Tier - 1e-6), 1, e.Tier)
+end
+
+-- round = the round this enemy belongs to (sets its health)
+local function spawnEnemy(tier, isBoss, round)
 	if #path < 2 then return end
+	local health = isBoss and Config.Boss.Health
+		or tierInfo(tier).HP * (1 + Config.HpPerRound * math.max(0, (round or 1) - 1))
+	local spread = isBoss and 0 or Config.LaneSpread
+	local lane, laneLength = buildLane((math.random() * 2 - 1) * spread)
 	local part = Instance.new("Part")
 	part.Name = "Enemy"
 	part.Shape = Enum.PartType.Ball
@@ -232,36 +283,47 @@ local function spawnEnemy(tier, isBoss)
 	part.CanQuery = false
 	part:SetAttribute("Tier", tier)
 	part:SetAttribute("Born", workspace:GetServerTimeNow())
-	local startHealth = isBoss and Config.Boss.Health or tier
-	part:SetAttribute("MaxHealth", startHealth)
-	part:SetAttribute("Health", startHealth)
+	part:SetAttribute("MaxHealth", health)
+	part:SetAttribute("Health", health)
 	if isBoss then
 		part.Name = "Boss"
 		part:SetAttribute("Boss", true)
 	end
 	part.Anchored = true
 	part.CanCollide = false
-	part.Position = path[1] + Vector3.new(0, ENEMY_HEIGHT, 0)
+	part.Position = lane[1] + Vector3.new(0, ENEMY_HEIGHT, 0)
 	part.Parent = enemiesFolder
-	table.insert(enemies, {
+	local entry = {
 		Part = part,
-		Health = isBoss and Config.Boss.Health or tier,
+		Tier = tier,              -- tier it spawned with (fixed speed)
+		ShownTier = tier,         -- tier it looks like now
+		Health = health,
+		MaxHealth = health,
+		Carry = 0,                -- damage dealt that has not been paid out as a whole HP yet
 		Boss = isBoss or false,
-		Speed = isBoss and Config.Boss.Speed or nil,
+		Speed = isBoss and Config.Boss.Speed or tierInfo(tier).Speed,
 		Pending = 0,
 		Born = os.clock(),
+		Lane = lane,
+		LaneLength = laneLength,
+		Travelled = 0,            -- studs walked along its own lane
 		Index = 1,
-		Dist = 0,
+		Dist = pathLength - laneLength, -- progress toward the castle (bigger = closer), comparable across lanes
 		Dead = false,
-	})
+	}
+	table.insert(enemies, entry)
+	lastSpawned = entry
 end
 
 local function damageEnemy(enemy, damage, owner)
 	if enemy.Dead then return end
-	local pops = math.min(damage, enemy.Health)
+	-- money is paid per whole HP removed; fractions carry over to the next hit
+	enemy.Carry += math.min(damage, enemy.Health)
 	enemy.Health -= damage
+	local pops = math.floor(enemy.Carry + 1e-6)
+	enemy.Carry -= pops
 	giveMoney(owner, pops * Config.RewardPerPop)
-	if enemy.Health <= 0 then
+	if enemy.Health <= 1e-6 then
 		enemy.Dead = true
 		stageKills += 1
 		if enemy.Boss then stageBossKilled = true end
@@ -271,7 +333,11 @@ local function damageEnemy(enemy, damage, owner)
 	else
 		enemy.Part:SetAttribute("Health", enemy.Health)
 		if not enemy.Boss then
-			enemy.Part:SetAttribute("Tier", enemy.Health) -- the wisp changes color as it loses health
+			local shown = shownTier(enemy)
+			if shown ~= enemy.ShownTier then
+				enemy.ShownTier = shown
+				enemy.Part:SetAttribute("Tier", shown) -- the wisp changes color as it loses health
+			end
 		end
 	end
 end
@@ -280,29 +346,30 @@ local function updateEnemies(dt)
 	for i = #enemies, 1, -1 do
 		local e = enemies[i]
 		if not e then continue end
-		local step = (e.Speed or tierInfo(e.Health).Speed) * dt
+		local step = e.Speed * dt
 		while step > 0 and e.Index < #path do
-			local target = path[e.Index + 1] + Vector3.new(0, ENEMY_HEIGHT, 0)
+			local target = e.Lane[e.Index + 1] + Vector3.new(0, ENEMY_HEIGHT, 0)
 			local current = e.Part.Position
 			local delta = target - current
 			local d = delta.Magnitude
 			if d <= step then
 				e.Part.Position = target
 				step -= d
-				e.Dist += d
+				e.Travelled += d
 				e.Index += 1
 			else
 				e.Part.Position = current + delta.Unit * step
-				e.Dist += step
+				e.Travelled += step
 				step = 0
 			end
 		end
+		e.Dist = pathLength - (e.LaneLength - e.Travelled)
 		if e.Index >= #path then
-			-- reached the end of the path: costs lives
+			-- reached the end of the path: costs lives (the tier it shows, or the boss's remaining health)
 			table.remove(enemies, i)
 			e.Dead = true
 			e.Part:Destroy()
-			loseLives(e.Health)
+			loseLives(e.Boss and math.ceil(e.Health - 1e-6) or e.ShownTier)
 			if workspace:GetAttribute("State") ~= "Playing" then return end
 		end
 	end
@@ -515,6 +582,7 @@ local function startGame()
 	workspace:SetAttribute("Lives", Config.StartLives)
 	workspace:SetAttribute("Round", 0)
 	workspace:SetAttribute("Countdown", 0)
+	workspace:SetAttribute("WaveState", "")
 	workspace:SetAttribute("GameSpeed", 1)
 	for _, p in ipairs(Players:GetPlayers()) do
 		p:SetAttribute("Money", Config.StartMoney)
@@ -538,11 +606,24 @@ local function startGame()
 		local minTier = math.max(1, maxTier - 1)
 		local interval = math.min(Config.SpawnInterval, Config.MaxSpawnTime / count)
 		local progress = { Spawned = 0, Count = count, Interval = interval, Done = false }
+		local function publish()
+			-- the HUD shows "WAVE r  x/y" for the current round's wave
+			if workspace:GetAttribute("Round") == r then
+				workspace:SetAttribute("WaveSpawned", progress.Spawned)
+				workspace:SetAttribute("WaveCount", count)
+			end
+		end
+		publish()
 		task.spawn(function()
 			for _ = 1, count do
 				if session ~= mySession then return end
-				spawnEnemy(math.random(minTier, maxTier))
+				-- keep new enemies from stacking at the entrance
+				while lastSpawned and not lastSpawned.Dead and lastSpawned.Travelled < Config.MinSpawnGap do
+					if not gameWait(0.05, mySession) then return end
+				end
+				spawnEnemy(math.random(minTier, maxTier), false, r)
 				progress.Spawned += 1
+				publish()
 				if not gameWait(interval, mySession) then return end
 			end
 			progress.Done = true
@@ -574,31 +655,44 @@ local function startGame()
 				end
 			end
 			if r == Config.Boss.Round then
-				spawnEnemy(Config.MaxTier, true) -- the boss leads the final wave
+				spawnEnemy(Config.MaxTier, true, r) -- the boss leads the final wave
 			end
 			progress = spawnRound(r)
 
-			-- AUTO SKIP ON : the next round starts once 60-70% of this wave's enemies have appeared.
-			-- AUTO SKIP OFF: the next round waits until this wave's timer runs out
-			--                (every enemy of the wave has appeared).
-			-- Enemies that haven't spawned yet keep spawning during the next round.
+			-- AUTO SKIP ON : the next round starts once 60-70% of this wave's enemies have appeared
+			--                (the rest keep spawning during the next round).
+			-- AUTO SKIP OFF: no timer while the wave spawns. Once its last enemy has appeared a
+			--                Config.WaveClearTime timer starts; the next round begins when it runs out
+			--                or when every enemy on the map is gone.
+			-- The setting is read once per round, so toggling it mid-wave applies from the next round.
 			if r < Config.TotalRounds then
-				local fraction = Config.SkipSpawnMin + math.random() * (Config.SkipSpawnMax - Config.SkipSpawnMin)
-				local need = math.max(1, math.ceil(progress.Count * fraction))
 				local thisWave = progress
-				local function target()
-					if workspace:GetAttribute("AutoSkip") then return need end
-					return thisWave.Count
-				end
-				while thisWave.Spawned < target() do
-					local remaining = (target() - thisWave.Spawned) * thisWave.Interval
-					workspace:SetAttribute("Countdown", math.max(1, math.ceil(remaining)))
-					if not gameWait(0.25, mySession) then return end
+				workspace:SetAttribute("WaveState", "Spawning")
+				if workspace:GetAttribute("AutoSkip") then
+					local fraction = Config.SkipSpawnMin + math.random() * (Config.SkipSpawnMax - Config.SkipSpawnMin)
+					local need = math.max(1, math.ceil(thisWave.Count * fraction))
+					while thisWave.Spawned < need do
+						local remaining = (need - thisWave.Spawned) * thisWave.Interval
+						workspace:SetAttribute("Countdown", math.max(1, math.ceil(remaining)))
+						if not gameWait(0.25, mySession) then return end
+					end
+				else
+					workspace:SetAttribute("Countdown", 0)
+					while thisWave.Spawned < thisWave.Count do
+						if not gameWait(0.25, mySession) then return end
+					end
+					workspace:SetAttribute("WaveState", "Clearing")
+					local deadline = gameTime + Config.WaveClearTime
+					while gameTime < deadline and #enemies > 0 do
+						workspace:SetAttribute("Countdown", math.max(1, math.ceil(deadline - gameTime)))
+						if not gameWait(0.25, mySession) then return end
+					end
 				end
 			end
 		end
 
 		workspace:SetAttribute("Countdown", 0)
+		workspace:SetAttribute("WaveState", "")
 		-- the last round has started: you win once all its enemies have appeared and are gone
 		while not progress.Done or #enemies > 0 do
 			task.wait(0.25)

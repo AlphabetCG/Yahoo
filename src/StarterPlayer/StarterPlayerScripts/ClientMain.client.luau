@@ -1062,11 +1062,15 @@ local function refreshHud()
 	local prep = currentState() == "Playing" and workspace:GetAttribute("Phase") == "Prep"
 	prepPanel.Visible = prep
 	prepTitle.Text = "MATCH STARTS IN " .. (workspace:GetAttribute("PrepLeft") or 0)
-	countdownPlate.Visible = not prep and (cd > 0 or round >= Config.TotalRounds) and currentState() == "Playing"
+	-- Auto Skip OFF: no timer while the wave spawns (shows "WAVE r  x/y"), then "NEXT ROUND IN n"
+	local spawning = workspace:GetAttribute("WaveState") == "Spawning" and cd == 0
+	countdownPlate.Visible = not prep and (cd > 0 or spawning or round >= Config.TotalRounds) and currentState() == "Playing"
 	if round == 0 then
 		countdownLabel.Text = "FIRST ROUND IN " .. cd
 	elseif round >= Config.TotalRounds then
 		countdownLabel.Text = "FINAL ROUND!"
+	elseif spawning then
+		countdownLabel.Text = ("WAVE %d   %d/%d"):format(round, workspace:GetAttribute("WaveSpawned") or 0, workspace:GetAttribute("WaveCount") or 0)
 	else
 		countdownLabel.Text = "NEXT ROUND IN " .. cd
 	end
@@ -1292,7 +1296,7 @@ local function refreshState()
 end
 
 workspace:GetAttributeChangedSignal("State"):Connect(refreshState)
-for _, attr in ipairs({ "Lives", "Round", "Countdown", "GameSpeed", "AutoSkip", "Phase", "PrepLeft", "EndReason" }) do
+for _, attr in ipairs({ "Lives", "Round", "Countdown", "GameSpeed", "AutoSkip", "Phase", "PrepLeft", "EndReason", "WaveState", "WaveSpawned", "WaveCount" }) do
 	workspace:GetAttributeChangedSignal(attr):Connect(refreshHud)
 end
 player:GetAttributeChangedSignal("Money"):Connect(refreshHud)
