@@ -34,9 +34,60 @@ local beginMatchRemote = newRemote("RemoteEvent", "BeginMatch")
 local retryRemote = newRemote("RemoteEvent", "Retry")
 local shotRemote = newRemote("UnreliableRemoteEvent", "Shot") -- tells clients to draw a shot
 
--- saved player data: settings, gems, units, materials (adds its own remotes to the Remotes folder)
+-- saved player data: settings, gems, units, items (adds its own remotes to the Remotes folder)
 local PlayerData = require(script.Parent:WaitForChild("PlayerData"))
+local RateLimit = require(script.Parent:WaitForChild("RateLimit"))
 PlayerData.init(remotes)
+
+-- ===== Host =====
+-- The host is the player who has been in the server the longest. Only the host controls the match
+-- flow (start, retry, menu, surrender, speed, auto skip). Shown to clients as workspace.HostId.
+local joinOrder = {}
+
+local function isHost(player)
+	return player.UserId == workspace:GetAttribute("HostId")
+end
+
+-- the match follows the host's saved Auto Skip choice
+local function applyHostSettings()
+	local host = joinOrder[1]
+	local profile = host and PlayerData.Get(host)
+	if profile then
+		workspace:SetAttribute("AutoSkip", profile.Settings.AutoSkip)
+	end
+end
+
+local function updateHost()
+	local host = joinOrder[1]
+	local newId = host and host.UserId or 0
+	if workspace:GetAttribute("HostId") ~= newId then
+		workspace:SetAttribute("HostId", newId)
+		applyHostSettings()
+	end
+end
+
+Players.PlayerAdded:Connect(function(player)
+	if not table.find(joinOrder, player) then table.insert(joinOrder, player) end
+	updateHost()
+end)
+for _, p in ipairs(Players:GetPlayers()) do
+	if not table.find(joinOrder, p) then table.insert(joinOrder, p) end
+end
+Players.PlayerRemoving:Connect(function(player)
+	local idx = table.find(joinOrder, player)
+	if idx then table.remove(joinOrder, idx) end
+	updateHost()
+end)
+PlayerData.OnProfileLoaded(function(player)
+	if isHost(player) then applyHostSettings() end
+end)
+workspace:SetAttribute("HostId", 0)
+updateHost()
+
+-- Match-flow remotes: only the host, at most 2 requests per second
+local function hostRequest(player, key)
+	return isHost(player) and RateLimit.allow(player, key, 2)
+end
 
 -- ===== World objects =====
 local towersFolder = workspace:FindFirstChild("Towers")
@@ -63,9 +114,13 @@ workspace:SetAttribute("State", "Menu")
 workspace:SetAttribute("Lives", Config.StartLives)
 workspace:SetAttribute("Round", 0)
 workspace:SetAttribute("Countdown", 0)
+workspace:SetAttribute("WaveState", "")   -- "Spawning" | "Clearing" (Auto Skip OFF timer) | ""
+workspace:SetAttribute("WaveSpawned", 0)
+workspace:SetAttribute("WaveCount", 0)
 workspace:SetAttribute("GameSpeed", 1)
 
-local enemies = {}        -- list of { Part, Health, Pending, Born, Index, Dist, Dead }
+local enemies = {}        -- list of enemy entries (see spawnEnemy)
+local lastSpawned = nil   -- the newest enemy (the next one spawns once it has walked out of the way)
 local stageKills = 0         -- enemies defeated this stage (for the rewards)
 local stageBossKilled = false
 local pendingHits = {}    -- shots in flight: { Enemy, Damage, Owner, Due } (damage lands when the bolt arrives)
@@ -116,6 +171,7 @@ local function clearEnemies()
 		if e.Part then e.Part:Destroy() end
 	end
 	table.clear(enemies)
+	lastSpawned = nil
 	enemiesFolder:ClearAllChildren()
 end
 
@@ -143,6 +199,7 @@ local function endGame(newState, reason)
 	session += 1
 	clearEnemies()
 	workspace:SetAttribute("Countdown", 0)
+	workspace:SetAttribute("WaveState", "")
 	workspace:SetAttribute("GameSpeed", 1)
 	publishStage()
 	workspace:SetAttribute("EndReason", reason or "")
@@ -166,12 +223,26 @@ local function loseLives(amount)
 end
 
 -- ===== Enemies =====
-local function tierInfo(health)
-	return Config.Tiers[math.clamp(health, 1, Config.MaxTier)]
+local function tierInfo(tier)
+	return Config.Tiers[math.clamp(tier, 1, Config.MaxTier)]
 end
 
-local function spawnEnemy(tier, isBoss)
+-- the tier an enemy looks like at its current health (its color steps down as it gets hurt)
+local function shownTier(e)
+	return math.clamp(math.ceil(e.Health / e.MaxHealth * e.Tier - 1e-6), 1, e.Tier)
+end
+
+-- Enemies walk the path center in single file. Two enemies keep at least the sum of their
+-- radii (Config.EnemySpacing / 2 each, bigger for the boss) between them.
+local function enemyRadius(isBoss)
+	return Config.EnemySpacing / 2 * (isBoss and Config.Boss.Scale or 1)
+end
+
+-- round = the round this enemy belongs to (sets its health)
+local function spawnEnemy(tier, isBoss, round)
 	if #path < 2 then return end
+	local health = isBoss and Config.Boss.Health
+		or tierInfo(tier).HP * (1 + Config.HpPerRound * math.max(0, (round or 1) - 1))
 	local part = Instance.new("Part")
 	part.Name = "Enemy"
 	part.Shape = Enum.PartType.Ball
@@ -181,9 +252,8 @@ local function spawnEnemy(tier, isBoss)
 	part.CanQuery = false
 	part:SetAttribute("Tier", tier)
 	part:SetAttribute("Born", workspace:GetServerTimeNow())
-	local startHealth = isBoss and Config.Boss.Health or tier
-	part:SetAttribute("MaxHealth", startHealth)
-	part:SetAttribute("Health", startHealth)
+	part:SetAttribute("MaxHealth", health)
+	part:SetAttribute("Health", health)
 	if isBoss then
 		part.Name = "Boss"
 		part:SetAttribute("Boss", true)
@@ -192,25 +262,35 @@ local function spawnEnemy(tier, isBoss)
 	part.CanCollide = false
 	part.Position = path[1] + Vector3.new(0, ENEMY_HEIGHT, 0)
 	part.Parent = enemiesFolder
-	table.insert(enemies, {
+	local entry = {
 		Part = part,
-		Health = isBoss and Config.Boss.Health or tier,
+		Tier = tier,              -- tier it spawned with (fixed speed)
+		ShownTier = tier,         -- tier it looks like now
+		Health = health,
+		MaxHealth = health,
+		Carry = 0,                -- damage dealt that has not been paid out as a whole HP yet
 		Boss = isBoss or false,
-		Speed = isBoss and Config.Boss.Speed or nil,
+		Speed = isBoss and Config.Boss.Speed or tierInfo(tier).Speed,
 		Pending = 0,
 		Born = os.clock(),
+		Radius = enemyRadius(isBoss),
 		Index = 1,
-		Dist = 0,
+		Dist = 0,                 -- studs walked along the path (bigger = closer to the castle)
 		Dead = false,
-	})
+	}
+	table.insert(enemies, entry)
+	lastSpawned = entry
 end
 
 local function damageEnemy(enemy, damage, owner)
 	if enemy.Dead then return end
-	local pops = math.min(damage, enemy.Health)
+	-- money is paid per whole HP removed; fractions carry over to the next hit
+	enemy.Carry += math.min(damage, enemy.Health)
 	enemy.Health -= damage
+	local pops = math.floor(enemy.Carry + 1e-6)
+	enemy.Carry -= pops
 	giveMoney(owner, pops * Config.RewardPerPop)
-	if enemy.Health <= 0 then
+	if enemy.Health <= 1e-6 then
 		enemy.Dead = true
 		stageKills += 1
 		if enemy.Boss then stageBossKilled = true end
@@ -220,16 +300,28 @@ local function damageEnemy(enemy, damage, owner)
 	else
 		enemy.Part:SetAttribute("Health", enemy.Health)
 		if not enemy.Boss then
-			enemy.Part:SetAttribute("Tier", enemy.Health) -- the wisp changes color as it loses health
+			local shown = shownTier(enemy)
+			if shown ~= enemy.ShownTier then
+				enemy.ShownTier = shown
+				enemy.Part:SetAttribute("Tier", shown) -- the wisp changes color as it loses health
+			end
 		end
 	end
 end
 
+-- Moves every enemy along the path, front of the line first. An enemy that catches up with the
+-- one ahead of it waits behind it (single file, no overlapping) until the gap opens again.
+local marching = {}
 local function updateEnemies(dt)
-	for i = #enemies, 1, -1 do
-		local e = enemies[i]
-		if not e then continue end
-		local step = (e.Speed or tierInfo(e.Health).Speed) * dt
+	table.clear(marching)
+	table.move(enemies, 1, #enemies, 1, marching)
+	table.sort(marching, function(a, b) return a.Dist > b.Dist end)
+	local ahead = nil
+	for _, e in ipairs(marching) do
+		local step = e.Speed * dt
+		if ahead then
+			step = math.min(step, math.max(0, ahead.Dist - (ahead.Radius + e.Radius) - e.Dist))
+		end
 		while step > 0 and e.Index < #path do
 			local target = path[e.Index + 1] + Vector3.new(0, ENEMY_HEIGHT, 0)
 			local current = e.Part.Position
@@ -247,12 +339,15 @@ local function updateEnemies(dt)
 			end
 		end
 		if e.Index >= #path then
-			-- reached the end of the path: costs lives
-			table.remove(enemies, i)
+			-- reached the end of the path: costs lives (the tier it shows, or the boss's remaining health)
+			local idx = table.find(enemies, e)
+			if idx then table.remove(enemies, idx) end
 			e.Dead = true
 			e.Part:Destroy()
-			loseLives(e.Health)
+			loseLives(e.Boss and math.ceil(e.Health - 1e-6) or e.ShownTier)
 			if workspace:GetAttribute("State") ~= "Playing" then return end
+		else
+			ahead = e
 		end
 	end
 end
@@ -339,7 +434,7 @@ end
 
 -- Units are invisible markers on the server (a model with one flat part).
 -- Every client draws the pixel-art sprite itself from the model's attributes.
-local function createTower(player, unitName, pos)
+local function createTower(player, unitName, pos, instance)
 	local unit = Config.Units[unitName]
 	if not unit then return nil end
 	local model = Instance.new("Model")
@@ -363,6 +458,7 @@ local function createTower(player, unitName, pos)
 	model:SetAttribute("OwnerId", player.UserId)
 	model:SetAttribute("Targeting", "First")
 	model:SetAttribute("Spent", unit.Cost)
+	model:SetAttribute("UnitId", instance and instance.Id or "")
 
 	model.Parent = towersFolder
 	local entry = {
@@ -376,28 +472,34 @@ local function createTower(player, unitName, pos)
 		Mode = "First",
 		Spent = unit.Cost,
 		Owner = player,
+		UnitId = instance and instance.Id,
 	}
 	table.insert(towers, entry)
 	towerByModel[model] = entry
 	return model
 end
 
-placeTowerRemote.OnServerInvoke = function(player, unitName, pos)
+-- unitId = the id of one of the player's saved unit instances (profile.Units)
+placeTowerRemote.OnServerInvoke = function(player, unitId, pos)
+	if not RateLimit.allow(player, "PlaceTower", 10) then return false, "Slow down" end
 	if workspace:GetAttribute("State") ~= "Playing" then return false, "Game is not running" end
-	if typeof(unitName) ~= "string" or typeof(pos) ~= "Vector3" then return false, "Bad request" end
+	if typeof(unitId) ~= "string" or typeof(pos) ~= "Vector3" then return false, "Bad request" end
+	local instance = PlayerData.GetUnit(player, unitId)
+	if not instance then return false, "You do not own this unit" end
+	local unitName = instance.Name
 	local unit = Config.Units[unitName]
 	if not unit then return false, "Unknown unit" end
-	if not PlayerData.Owns(player, unitName) then return false, "You do not own this unit" end
 	local money = player:GetAttribute("Money") or 0
 	if money < unit.Cost then return false, "Not enough money" end
 	local ok, reason = Config.CanPlace(pos, towersFolder)
 	if not ok then return false, reason end
 	player:SetAttribute("Money", money - unit.Cost)
-	createTower(player, unitName, pos)
+	createTower(player, unitName, pos, instance)
 	return true
 end
 
 upgradeTowerRemote.OnServerInvoke = function(player, model)
+	if not RateLimit.allow(player, "UpgradeTower", 10) then return false, "Slow down" end
 	if workspace:GetAttribute("State") ~= "Playing" then return false, "Game is not running" end
 	if typeof(model) ~= "Instance" then return false, "Bad request" end
 	local t = towerByModel[model]
@@ -415,14 +517,12 @@ upgradeTowerRemote.OnServerInvoke = function(player, model)
 	model:SetAttribute("Spent", t.Spent)
 	t.Stats = nextStats
 	model:SetAttribute("Level", nextLevel)
-	if t.LevelLabel then
-		t.LevelLabel.Text = (nextLevel >= Config.MaxLevel(t.UnitName)) and "MAX" or ("LV " .. nextLevel)
-	end
 	return true
 end
 
 -- Selling returns Config.SellRefund (50%) of everything spent on the unit (placement + upgrades)
 sellTowerRemote.OnServerInvoke = function(player, model)
+	if not RateLimit.allow(player, "SellTower", 10) then return false, "Slow down" end
 	if workspace:GetAttribute("State") ~= "Playing" then return false, "Game is not running" end
 	if typeof(model) ~= "Instance" then return false, "Bad request" end
 	local t = towerByModel[model]
@@ -439,6 +539,7 @@ end
 
 -- Targeting mode: First / Last / Strongest / Weakest / Closest / None
 setTargetingRemote.OnServerEvent:Connect(function(player, model, mode)
+	if not RateLimit.allow(player, "SetTargeting", 10) then return end
 	if workspace:GetAttribute("State") ~= "Playing" then return end
 	if typeof(model) ~= "Instance" or typeof(mode) ~= "string" then return end
 	if not table.find(Config.TargetModes, mode) then return end
@@ -449,6 +550,14 @@ setTargetingRemote.OnServerEvent:Connect(function(player, model, mode)
 end)
 
 -- ===== Rounds =====
+-- Waits (game time) until the newest enemy has walked far enough that a new one fits behind it.
+local function waitForRoom(isBoss, mySession)
+	while lastSpawned and not lastSpawned.Dead
+		and lastSpawned.Dist < lastSpawned.Radius + enemyRadius(isBoss) do
+		if not gameWait(0.05, mySession) then return end
+	end
+end
+
 local function startGame()
 	if workspace:GetAttribute("State") ~= "Menu" then return end
 	clearAll()
@@ -458,6 +567,7 @@ local function startGame()
 	workspace:SetAttribute("Lives", Config.StartLives)
 	workspace:SetAttribute("Round", 0)
 	workspace:SetAttribute("Countdown", 0)
+	workspace:SetAttribute("WaveState", "")
 	workspace:SetAttribute("GameSpeed", 1)
 	for _, p in ipairs(Players:GetPlayers()) do
 		p:SetAttribute("Money", Config.StartMoney)
@@ -481,12 +591,29 @@ local function startGame()
 		local minTier = math.max(1, maxTier - 1)
 		local interval = math.min(Config.SpawnInterval, Config.MaxSpawnTime / count)
 		local progress = { Spawned = 0, Count = count, Interval = interval, Done = false }
+		local function publish()
+			-- the HUD shows "WAVE r  x/y" for the current round's wave
+			if workspace:GetAttribute("Round") == r then
+				workspace:SetAttribute("WaveSpawned", progress.Spawned)
+				workspace:SetAttribute("WaveCount", count)
+			end
+		end
+		publish()
 		task.spawn(function()
 			for _ = 1, count do
 				if session ~= mySession then return end
-				spawnEnemy(math.random(minTier, maxTier))
+				waitForRoom(false, mySession)
+				if session ~= mySession then return end
+				spawnEnemy(math.random(minTier, maxTier), false, r)
 				progress.Spawned += 1
+				publish()
 				if not gameWait(interval, mySession) then return end
+			end
+			if r == Config.Boss.Round then
+				-- the boss closes the final wave (it is the slowest, so nothing has to queue behind it)
+				waitForRoom(true, mySession)
+				if session ~= mySession then return end
+				spawnEnemy(Config.MaxTier, true, r)
 			end
 			progress.Done = true
 		end)
@@ -516,32 +643,42 @@ local function startGame()
 					giveMoney(p, Config.RoundBonus + (r - 2) * Config.RoundBonusStep)
 				end
 			end
-			if r == Config.Boss.Round then
-				spawnEnemy(Config.MaxTier, true) -- the boss leads the final wave
-			end
 			progress = spawnRound(r)
 
-			-- AUTO SKIP ON : the next round starts once 60-70% of this wave's enemies have appeared.
-			-- AUTO SKIP OFF: the next round waits until this wave's timer runs out
-			--                (every enemy of the wave has appeared).
-			-- Enemies that haven't spawned yet keep spawning during the next round.
+			-- AUTO SKIP ON : the next round starts once 60-70% of this wave's enemies have appeared
+			--                (the rest keep spawning during the next round).
+			-- AUTO SKIP OFF: no timer while the wave spawns. Once its last enemy has appeared a
+			--                Config.WaveClearTime timer starts; the next round begins when it runs out
+			--                or when every enemy on the map is gone.
+			-- The setting is read once per round, so toggling it mid-wave applies from the next round.
 			if r < Config.TotalRounds then
-				local fraction = Config.SkipSpawnMin + math.random() * (Config.SkipSpawnMax - Config.SkipSpawnMin)
-				local need = math.max(1, math.ceil(progress.Count * fraction))
 				local thisWave = progress
-				local function target()
-					if workspace:GetAttribute("AutoSkip") then return need end
-					return thisWave.Count
-				end
-				while thisWave.Spawned < target() do
-					local remaining = (target() - thisWave.Spawned) * thisWave.Interval
-					workspace:SetAttribute("Countdown", math.max(1, math.ceil(remaining)))
-					if not gameWait(0.25, mySession) then return end
+				workspace:SetAttribute("WaveState", "Spawning")
+				if workspace:GetAttribute("AutoSkip") then
+					local fraction = Config.SkipSpawnMin + math.random() * (Config.SkipSpawnMax - Config.SkipSpawnMin)
+					local need = math.max(1, math.ceil(thisWave.Count * fraction))
+					while thisWave.Spawned < need do
+						local remaining = (need - thisWave.Spawned) * thisWave.Interval
+						workspace:SetAttribute("Countdown", math.max(1, math.ceil(remaining)))
+						if not gameWait(0.25, mySession) then return end
+					end
+				else
+					workspace:SetAttribute("Countdown", 0)
+					while thisWave.Spawned < thisWave.Count do
+						if not gameWait(0.25, mySession) then return end
+					end
+					workspace:SetAttribute("WaveState", "Clearing")
+					local deadline = gameTime + Config.WaveClearTime
+					while gameTime < deadline and #enemies > 0 do
+						workspace:SetAttribute("Countdown", math.max(1, math.ceil(deadline - gameTime)))
+						if not gameWait(0.25, mySession) then return end
+					end
 				end
 			end
 		end
 
 		workspace:SetAttribute("Countdown", 0)
+		workspace:SetAttribute("WaveState", "")
 		-- the last round has started: you win once all its enemies have appeared and are gone
 		while not progress.Done or #enemies > 0 do
 			task.wait(0.25)
@@ -553,9 +690,12 @@ local function startGame()
 	end)
 end
 
-startGameRemote.OnServerEvent:Connect(startGame)
+startGameRemote.OnServerEvent:Connect(function(player)
+	if hostRequest(player, "StartGame") then startGame() end
+end)
 
-returnToMenuRemote.OnServerEvent:Connect(function()
+returnToMenuRemote.OnServerEvent:Connect(function(player)
+	if not hostRequest(player, "ReturnToMenu") then return end
 	local state = workspace:GetAttribute("State")
 	if state == "GameOver" or state == "Victory" then
 		goToMenu()
@@ -563,14 +703,16 @@ returnToMenuRemote.OnServerEvent:Connect(function()
 end)
 
 -- Surrender: ends the stage immediately and shows the STAGE FAILED screen
-surrenderRemote.OnServerEvent:Connect(function()
+surrenderRemote.OnServerEvent:Connect(function(player)
+	if not hostRequest(player, "Surrender") then return end
 	if workspace:GetAttribute("State") == "Playing" then
 		endGame("GameOver", "Surrender")
 	end
 end)
 
 -- Retry (from the stage clear / failed screen): reset everything and start a fresh prep phase
-retryRemote.OnServerEvent:Connect(function()
+retryRemote.OnServerEvent:Connect(function(player)
+	if not hostRequest(player, "Retry") then return end
 	local state = workspace:GetAttribute("State")
 	if state == "GameOver" or state == "Victory" then
 		goToMenu()
@@ -581,7 +723,8 @@ end)
 -- Phase inside a game: "Prep" = place units + START MATCH button / countdown, "Match" = rounds running
 workspace:SetAttribute("Phase", "Menu")
 workspace:SetAttribute("PrepLeft", 0)
-beginMatchRemote.OnServerEvent:Connect(function()
+beginMatchRemote.OnServerEvent:Connect(function(player)
+	if not hostRequest(player, "BeginMatch") then return end
 	if workspace:GetAttribute("State") == "Playing" and workspace:GetAttribute("Phase") == "Prep" then
 		matchRequested = true
 	end
@@ -589,16 +732,21 @@ end)
 
 -- Auto skip: ON = next round starts when ~60-70% of the wave has appeared,
 --            OFF = next round only starts when the wave's own timer runs out
-workspace:SetAttribute("AutoSkip", Config.AutoSkipDefault)
+-- Everyone's choice is saved; only the host's choice drives the match.
+if workspace:GetAttribute("AutoSkip") == nil then
+	workspace:SetAttribute("AutoSkip", Config.AutoSkipDefault)
+end
 setAutoSkipRemote.OnServerEvent:Connect(function(player, value)
-	if typeof(value) == "boolean" then
+	if typeof(value) ~= "boolean" or not RateLimit.allow(player, "SetAutoSkip", 2) then return end
+	PlayerData.SetSetting(player, "AutoSkip", value) -- remembered between sessions
+	if isHost(player) then
 		workspace:SetAttribute("AutoSkip", value)
-		PlayerData.SetSetting(player, "AutoSkip", value) -- remembered between sessions
 	end
 end)
 
 -- Game speed (x1 / x2 / x3)
-setSpeedRemote.OnServerEvent:Connect(function(_, speed)
+setSpeedRemote.OnServerEvent:Connect(function(player, speed)
+	if not hostRequest(player, "SetSpeed") then return end
 	if workspace:GetAttribute("State") ~= "Playing" then return end
 	if table.find(Config.SpeedOptions, speed) then
 		publishStage()

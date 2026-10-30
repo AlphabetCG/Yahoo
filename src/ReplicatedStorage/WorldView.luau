@@ -306,7 +306,8 @@ local function updateBar(vis)
 	local maxHp = math.max(1, vis.part:GetAttribute("MaxHealth") or vis.tier)
 	local hp = math.clamp(vis.part:GetAttribute("Health") or vis.part:GetAttribute("Tier") or maxHp, 0, maxHp)
 	vis.barFill.Size = UDim2.fromOffset(math.max(hp > 0 and 1 or 0, math.floor(vis.barMax * hp / maxHp + 0.5)), vis.barH)
-	vis.hpLabel.Text = shortNumber(hp) .. "/" .. shortNumber(maxHp)
+	-- health can be fractional (it scales with the round): show it rounded up, so 0.4 HP reads "1"
+	vis.hpLabel.Text = shortNumber(math.ceil(hp - 1e-6)) .. "/" .. shortNumber(math.ceil(maxHp - 1e-6))
 end
 
 local function removeEnemy(part)

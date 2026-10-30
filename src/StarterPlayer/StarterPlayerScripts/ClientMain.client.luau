@@ -33,11 +33,41 @@ local setSettingRemote = remotes:WaitForChild("SetSetting")
 local summonRemote = remotes:WaitForChild("Summon")
 local stageRewardsRemote = remotes:WaitForChild("StageRewards")
 
--- the player's saved data (settings, gems, units, materials); filled in by the server
+-- the player's saved data (settings, gems, units, items); filled in by the server
+-- profile.Units = { [uid] = { Id, Name, Level, ... } }: one entry per owned unit
 local profile = nil
-local function ownsUnit(name)
-	return profile ~= nil and (profile.Units[name] or 0) > 0
+local function unitCount(name)
+	local n = 0
+	if profile then
+		for _, u in pairs(profile.Units) do
+			if u.Name == name then n += 1 end
+		end
+	end
+	return n
 end
+local function ownsUnit(name)
+	return unitCount(name) > 0
+end
+-- the owned copy of a unit that gets placed from the shop: highest level, then the oldest
+-- (replaced by the loadout later)
+local function bestUnitId(name)
+	local best
+	if profile then
+		for _, u in pairs(profile.Units) do
+			if u.Name == name and (not best or u.Level > best.Level
+				or (u.Level == best.Level and (u.Obtained or 0) < (best.Obtained or 0))) then
+				best = u
+			end
+		end
+	end
+	return best and best.Id
+end
+
+-- the host (longest in the server) controls the match flow
+local function isHost()
+	return workspace:GetAttribute("HostId") == player.UserId
+end
+local HOST_ONLY = "Only the host can do that"
 local towersFolder = workspace:WaitForChild("Towers")
 
 pcall(function()
@@ -719,7 +749,7 @@ local function makePortrait(parent, name)
 	make("UIStroke", { Color = PANEL_EDGE, Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, box)
 	make("Frame", { Position = UDim2.new(0, 0, 1, -22), Size = UDim2.new(1, 0, 0, 22), BackgroundColor3 = rgb(98, 168, 76), BorderSizePixel = 0 }, box)
 	local w, h = PixelArt.size(name)
-	local scale = 4
+	local scale = math.min(4, math.floor(80 / h)) -- taller sprites shrink to fit the 84 px box
 	local holder = make("Frame", {
 		Position = UDim2.new(0.5, -(w * scale) / 2, 0.5, -(h * scale) / 2 - 2),
 		Size = UDim2.fromOffset(0, 0),
@@ -757,6 +787,7 @@ for i, name in ipairs(Config.UnitOrder) do
 		Size = UDim2.new(1, 0, 0, 26),
 		Text = string.upper(name),
 		TextSize = 22,
+		TextColor3 = Config.RarityOf(name).Color,
 	})
 	label(card, {
 		Position = UDim2.fromOffset(0, 120),
@@ -999,6 +1030,7 @@ gearButton.MouseButton1Click:Connect(function()
 end)
 resumeButton.MouseButton1Click:Connect(closeSettings)
 surrenderButton.MouseButton1Click:Connect(function()
+	if not isHost() then return end
 	mainView.Visible = false
 	confirmView.Visible = true
 end)
@@ -1030,11 +1062,15 @@ local function refreshHud()
 	local prep = currentState() == "Playing" and workspace:GetAttribute("Phase") == "Prep"
 	prepPanel.Visible = prep
 	prepTitle.Text = "MATCH STARTS IN " .. (workspace:GetAttribute("PrepLeft") or 0)
-	countdownPlate.Visible = not prep and (cd > 0 or round >= Config.TotalRounds) and currentState() == "Playing"
+	-- Auto Skip OFF: no timer while the wave spawns (shows "WAVE r  x/y"), then "NEXT ROUND IN n"
+	local spawning = workspace:GetAttribute("WaveState") == "Spawning" and cd == 0
+	countdownPlate.Visible = not prep and (cd > 0 or spawning or round >= Config.TotalRounds) and currentState() == "Playing"
 	if round == 0 then
 		countdownLabel.Text = "FIRST ROUND IN " .. cd
 	elseif round >= Config.TotalRounds then
 		countdownLabel.Text = "FINAL ROUND!"
+	elseif spawning then
+		countdownLabel.Text = ("WAVE %d   %d/%d"):format(round, workspace:GetAttribute("WaveSpawned") or 0, workspace:GetAttribute("WaveCount") or 0)
 	else
 		countdownLabel.Text = "NEXT ROUND IN " .. cd
 	end
@@ -1137,28 +1173,51 @@ local function refreshInventory()
 	local canSummon = profile ~= nil and profile.Gems >= Config.Summon.Cost
 	setButtonColor(summonButton, canSummon and GREEN_BTN or GREY_BTN)
 
+	-- one card per owned unit (duplicates are separate units, never stacked),
+	-- sorted rarest first, then highest level, then newest; unowned units follow as LOCKED cards
 	clearGui(unitsScroll)
-	for i, name in ipairs(Config.UnitOrder) do
-		local unit = Config.Units[name]
-		local base = unit.Levels[1]
-		local copies = profile and profile.Units[name] or 0
-		local card = make("Frame", { LayoutOrder = i, BackgroundColor3 = copies > 0 and PANEL_LIGHT or rgb(36, 42, 62), BorderSizePixel = 0 }, unitsScroll)
-		make("UIStroke", { Color = PANEL_EDGE, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, card)
+	local owned = {}
+	if profile then
+		for _, u in pairs(profile.Units) do
+			if Config.Units[u.Name] then table.insert(owned, u) end
+		end
+	end
+	table.sort(owned, function(a, b)
+		local ra, rb = Config.RarityOf(a.Name).Order, Config.RarityOf(b.Name).Order
+		if ra ~= rb then return ra > rb end
+		if a.Level ~= b.Level then return a.Level > b.Level end
+		if (a.Obtained or 0) ~= (b.Obtained or 0) then return (a.Obtained or 0) > (b.Obtained or 0) end
+		return a.Id < b.Id
+	end)
+
+	local function unitCard(order, name, instance)
+		local base = Config.Units[name].Levels[1]
+		local rarity = Config.RarityOf(name)
+		local card = make("Frame", { LayoutOrder = order, BackgroundColor3 = instance and PANEL_LIGHT or rgb(36, 42, 62), BorderSizePixel = 0 }, unitsScroll)
+		make("UIStroke", { Color = instance and rarity.Color or PANEL_EDGE, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, card)
 		makePortrait(card, name)
-		label(card, { Position = UDim2.fromOffset(0, 92), Size = UDim2.new(1, 0, 0, 24), Text = string.upper(name), TextSize = 20 })
+		label(card, { Position = UDim2.fromOffset(0, 92), Size = UDim2.new(1, 0, 0, 24), Text = string.upper(name), TextSize = 20, TextColor3 = rarity.Color })
 		label(card, {
 			Position = UDim2.fromOffset(0, 116), Size = UDim2.new(1, 0, 0, 24),
-			Text = copies > 0 and ("OWNED x" .. copies) or "LOCKED",
-			TextSize = 18, TextColor3 = copies > 0 and GOLD or RED,
+			Text = instance and ("LV " .. instance.Level .. "  " .. string.upper(Config.Units[name].Rarity or "")) or "LOCKED",
+			TextSize = 18, TextColor3 = instance and GOLD or RED,
 		})
 		label(card, { Position = UDim2.fromOffset(0, 140), Size = UDim2.new(1, 0, 0, 20), Text = ("DMG %d   RNG %d"):format(base.Damage, base.Range), TextSize = 14, TextColor3 = TEXT_DIM })
 		label(card, { Position = UDim2.fromOffset(0, 160), Size = UDim2.new(1, 0, 0, 20), Text = "SPA " .. spaText(base.Cooldown), TextSize = 14, TextColor3 = TEXT_DIM })
 	end
 
+	for i, u in ipairs(owned) do
+		unitCard(i, u.Name, u)
+	end
+	for i, name in ipairs(Config.UnitOrder) do
+		if unitCount(name) == 0 then unitCard(#owned + i, name, nil) end
+	end
+	unitsTab.Text = ("UNITS %d/%d"):format(#owned, Config.MaxUnitsOwned)
+
 	clearGui(materialsScroll)
 	for i, key in ipairs(Config.MaterialOrder) do
 		local mat = Config.Materials[key]
-		local count = profile and profile.Materials[key] or 0
+		local count = profile and profile.Items[key] or 0
 		local row = make("Frame", { LayoutOrder = i, Size = UDim2.new(1, 0, 0, 64), BackgroundColor3 = PANEL_LIGHT, BorderSizePixel = 0 }, materialsScroll)
 		make("UIStroke", { Color = PANEL_EDGE, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, row)
 		local icon = make("Frame", { Position = UDim2.fromOffset(12, 12), Size = UDim2.fromOffset(40, 40), BackgroundColor3 = mat.Color, BorderSizePixel = 0 }, row)
@@ -1191,8 +1250,8 @@ summonButton.MouseButton1Click:Connect(function()
 	local ok, result = summonRemote:InvokeServer()
 	summoning = false
 	if ok and typeof(result) == "table" then
-		summonResult.TextColor3 = GOLD
-		summonResult.Text = ("Summoned %s!  %s"):format(string.upper(result.Unit), result.New and "NEW UNIT" or ("now x" .. result.Copies))
+		summonResult.TextColor3 = Config.RarityOf(result.Unit).Color
+		summonResult.Text = ("Summoned %s %s!  %s"):format(string.upper(result.Rarity or ""), string.upper(result.Unit), result.New and "NEW UNIT" or "ADDED AS A NEW CARD")
 	else
 		summonResult.TextColor3 = RED
 		summonResult.Text = tostring(result or "Summon failed")
@@ -1237,30 +1296,53 @@ local function refreshState()
 end
 
 workspace:GetAttributeChangedSignal("State"):Connect(refreshState)
-for _, attr in ipairs({ "Lives", "Round", "Countdown", "GameSpeed", "AutoSkip", "Phase", "PrepLeft", "EndReason" }) do
+for _, attr in ipairs({ "Lives", "Round", "Countdown", "GameSpeed", "AutoSkip", "Phase", "PrepLeft", "EndReason", "WaveState", "WaveSpawned", "WaveCount" }) do
 	workspace:GetAttributeChangedSignal(attr):Connect(refreshHud)
 end
 player:GetAttributeChangedSignal("Money"):Connect(refreshHud)
 
+-- match-flow buttons: only the host's clicks reach the server; everyone else waits for the host
+local function refreshHostButtons()
+	local host = isHost()
+	playButton.Text = host and "PLAY" or "WAITING FOR HOST"
+	playButton.TextSize = host and 44 or 26
+	setButtonColor(playButton, host and GREEN_BTN or GREY_BTN)
+	retryButton.Text = host and "RETRY" or "WAITING..."
+	setButtonColor(retryButton, host and GREEN_BTN or GREY_BTN)
+	menuButton.Text = host and "MAIN MENU" or "HOST DECIDES"
+	startMatchButton.Text = host and "START MATCH" or "HOST STARTS"
+	setButtonColor(startMatchButton, host and GREEN_BTN or GREY_BTN)
+	surrenderButton.Text = host and "SURRENDER" or "HOST ONLY"
+	setButtonColor(surrenderButton, host and RED_BTN or GREY_BTN)
+end
+workspace:GetAttributeChangedSignal("HostId"):Connect(function()
+	refreshHostButtons()
+	refreshHud()
+end)
+refreshHostButtons()
+
 playButton.MouseButton1Click:Connect(function()
-	startGameRemote:FireServer()
+	if isHost() then startGameRemote:FireServer() end
 end)
 retryButton.MouseButton1Click:Connect(function()
-	retryRemote:FireServer()
+	if isHost() then retryRemote:FireServer() end
 end)
 menuButton.MouseButton1Click:Connect(function()
-	returnToMenuRemote:FireServer()
+	if isHost() then returnToMenuRemote:FireServer() end
 end)
 speedButton.MouseButton1Click:Connect(function()
+	if not isHost() then notify(HOST_ONLY) return end
 	local speed = workspace:GetAttribute("GameSpeed") or 1
 	local options = Config.SpeedOptions
 	local idx = table.find(options, speed) or 1
 	setSpeedRemote:FireServer(options[idx % #options + 1])
 end)
 autoSkipButton.MouseButton1Click:Connect(function()
+	if not isHost() then notify(HOST_ONLY) return end
 	setAutoSkipRemote:FireServer(not workspace:GetAttribute("AutoSkip"))
 end)
 startMatchButton.MouseButton1Click:Connect(function()
+	if not isHost() then notify(HOST_ONLY) return end
 	beginMatchRemote:FireServer()
 end)
 
@@ -1275,6 +1357,10 @@ RunService.RenderStepped:Connect(function()
 end)
 
 -- ===== Input =====
+local UNIT_KEYS = {
+	Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three,
+	Enum.KeyCode.Four, Enum.KeyCode.Five, Enum.KeyCode.Six,
+}
 UserInputService.InputBegan:Connect(function(input, processed)
 	if currentState() ~= "Playing" then return end
 	if input.UserInputType == Enum.UserInputType.MouseButton1 then
@@ -1284,7 +1370,7 @@ UserInputService.InputBegan:Connect(function(input, processed)
 			if placing then return end
 			placing = true
 			local ok, success, reason = pcall(function()
-				return placeTowerRemote:InvokeServer(selectedUnit, pos)
+				return placeTowerRemote:InvokeServer(bestUnitId(selectedUnit), pos)
 			end)
 			placing = false
 			if ok and success then
@@ -1305,8 +1391,10 @@ UserInputService.InputBegan:Connect(function(input, processed)
 			deselectTower()
 		elseif input.KeyCode == Enum.KeyCode.U then
 			tryUpgrade()
-		elseif input.KeyCode == Enum.KeyCode.One then
-			selectUnit(Config.UnitOrder[1])
+		else
+			-- 1-6 pick the unit with that [number] in the shop
+			local slot = table.find(UNIT_KEYS, input.KeyCode)
+			if slot and Config.UnitOrder[slot] then selectUnit(Config.UnitOrder[slot]) end
 		end
 	end
 end)
