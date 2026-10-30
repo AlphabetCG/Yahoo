@@ -33,7 +33,6 @@ Config.TargetModes = { "First", "Last", "Strongest", "Weakest", "Closest", "None
 Config.GroundY = 0
 Config.PathTop = 0.4
 Config.PathWidth = 10
-Config.TowerScale = 0.6        -- how big units are compared to the model in TowerModels
 Config.TowerSpacing = 6        -- minimum distance between two units
 Config.Bounds = { MinX = -78, MaxX = 78, MinZ = -42, MaxZ = 42 }
 
