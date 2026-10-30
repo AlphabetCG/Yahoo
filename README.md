@@ -29,7 +29,7 @@ Then open the place in Roblox Studio and click **Connect** in the Rojo plugin.
 | Area | What exists today |
 |---|---|
 | **Match flow** | Menu → **Prep** phase (60 s, or press START MATCH) → **15 rounds** → Victory / Game Over. Retry, Main Menu and Surrender (with confirmation). |
-| **Waves** | Enemy count = `6 + 3.2 × round` (54 in round 15). Each enemy spawns as tier 1–5, which fixes its speed and base HP; health grows 9 % per round. Its color steps down through the tiers as it loses health. Enemies walk their own lane across the path's width and never spawn on top of each other. The boss joins round 15 with 200 HP. |
+| **Waves** | Enemy count = `6 + 3.2 × round` (54 in round 15). Each enemy spawns as tier 1–5, which fixes its speed and base HP; health grows 9 % per round. Its color steps down through the tiers as it loses health. Enemies walk the path center in single file, keeping `EnemySpacing` studs apart: a faster enemy queues behind a slower one instead of overlapping it. The boss closes round 15 with 200 HP. |
 | **Auto Skip** | **ON**: the next round starts once 60–70 % of the current wave has spawned. **OFF**: no timer while the wave spawns (the HUD shows `WAVE r  x/y`); after the last enemy appears, a 20 s timer starts and the next round begins when it runs out or every enemy is gone. The match follows the host's setting. |
 | **Game speed** | x1 / x2 / x3 for everyone. The stage timer runs in real time. |
 | **Units** | One unit, **Herobrine** (Rare), with 5 in-match upgrade levels, 6 targeting modes (First / Last / Strongest / Weakest / Closest / None) and selling at a 50 % refund. |
@@ -127,7 +127,7 @@ Nearly everything is in [Config.luau](src/ReplicatedStorage/Config.luau):
 
 - **New unit:** add a sprite to `PixelArt` (`defs.<Name>`) and an entry to `Config.Units`. Then add it to `Config.UnitOrder` to show it in the shop, and to `Config.Summon.Pool` to make it summonable.
 - **New material:** add it to `Config.Materials` and `Config.MaterialOrder`. Grant it with `PlayerData.AddMaterial(player, key, n)`.
-- **Waves and economy:** `EnemiesBase`, `EnemiesPerRound`, `HpPerRound`, `WaveClearTime`, `LaneSpread`, `MinSpawnGap`, `RewardPerPop`, `RoundBonus`, `StartMoney`, and `Tiers[*].Speed` / `HP`.
+- **Waves and economy:** `EnemiesBase`, `EnemiesPerRound`, `HpPerRound`, `WaveClearTime`, `EnemySpacing`, `RewardPerPop`, `RoundBonus`, `StartMoney`, and `Tiers[*].Speed` / `HP`.
 - **Path:** move or add the `Workspace.Waypoints` parts, which are numbered in order.
 
 ---

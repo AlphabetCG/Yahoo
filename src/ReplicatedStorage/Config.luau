@@ -21,8 +21,8 @@ Config.WaveClearTime = 20       -- AUTO SKIP OFF: after the last enemy of a wave
                                 -- when this many seconds (game time) have passed or every enemy is gone
 Config.AutoSkipDefault = true   -- AUTO SKIP on/off when the game loads (players can toggle it in game)
 Config.SpawnInterval = 1.6     -- seconds between enemies (bigger = slower spawning)
-Config.MinSpawnGap = 2         -- studs: a new enemy waits until the previous one has walked this far
-Config.LaneSpread = 3.5        -- studs: each enemy walks its own lane up to this far left/right of the path center
+Config.EnemySpacing = 6        -- studs between two enemies: they walk the path center in single file,
+                               -- a faster one queues behind a slower one, and spawning waits for room
 Config.SpawnGrace = 0.1        -- real seconds a new enemy stays untargetable, so clients have drawn it before units shoot it
 Config.ShotTravel = 0.12       -- real seconds a shot takes to land; damage is applied when the bolt arrives
 Config.SpeedOptions = { 1, 2, 3 } -- game speed choices (x1, x2, x3)

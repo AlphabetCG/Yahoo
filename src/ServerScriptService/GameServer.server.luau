@@ -107,41 +107,6 @@ local path = Config.GetPath()
 if #path < 2 then
 	warn("GameServer: Workspace.Waypoints needs at least 2 parts named 1, 2, 3...")
 end
-local pathLength = 0
-for i = 1, #path - 1 do pathLength += (path[i + 1] - path[i]).Magnitude end
-
--- Each enemy walks its own lane: the path shifted sideways by `offset` studs (corners are mitered
--- so the lane stays parallel to the path). Returns the lane points and the lane's length.
-local function flatNormal(a, b)
-	local d = Vector3.new(b.X - a.X, 0, b.Z - a.Z)
-	if d.Magnitude < 1e-3 then return Vector3.zero end
-	d = d.Unit
-	return Vector3.new(-d.Z, 0, d.X)
-end
-
-local function buildLane(offset)
-	local n = #path
-	local lane = table.create(n)
-	for i = 1, n do
-		local nIn = i > 1 and flatNormal(path[i - 1], path[i]) or nil
-		local nOut = i < n and flatNormal(path[i], path[i + 1]) or nil
-		local m
-		if nIn and nOut then
-			local sum = nIn + nOut
-			if sum.Magnitude < 1e-3 then
-				m = nOut
-			else
-				m = sum.Unit / math.max(0.5, sum.Unit:Dot(nOut))
-			end
-		else
-			m = nIn or nOut or Vector3.zero
-		end
-		lane[i] = path[i] + m * offset
-	end
-	local length = 0
-	for i = 1, n - 1 do length += (lane[i + 1] - lane[i]).Magnitude end
-	return lane, length
-end
 
 -- ===== Game state (shared with clients through attributes on Workspace) =====
 -- State: "Menu" | "Playing" | "GameOver" | "Victory"
@@ -155,7 +120,7 @@ workspace:SetAttribute("WaveCount", 0)
 workspace:SetAttribute("GameSpeed", 1)
 
 local enemies = {}        -- list of enemy entries (see spawnEnemy)
-local lastSpawned = nil   -- the newest enemy (new spawns wait until it has walked Config.MinSpawnGap)
+local lastSpawned = nil   -- the newest enemy (the next one spawns once it has walked out of the way)
 local stageKills = 0         -- enemies defeated this stage (for the rewards)
 local stageBossKilled = false
 local pendingHits = {}    -- shots in flight: { Enemy, Damage, Owner, Due } (damage lands when the bolt arrives)
@@ -267,13 +232,17 @@ local function shownTier(e)
 	return math.clamp(math.ceil(e.Health / e.MaxHealth * e.Tier - 1e-6), 1, e.Tier)
 end
 
+-- Enemies walk the path center in single file. Two enemies keep at least the sum of their
+-- radii (Config.EnemySpacing / 2 each, bigger for the boss) between them.
+local function enemyRadius(isBoss)
+	return Config.EnemySpacing / 2 * (isBoss and Config.Boss.Scale or 1)
+end
+
 -- round = the round this enemy belongs to (sets its health)
 local function spawnEnemy(tier, isBoss, round)
 	if #path < 2 then return end
 	local health = isBoss and Config.Boss.Health
 		or tierInfo(tier).HP * (1 + Config.HpPerRound * math.max(0, (round or 1) - 1))
-	local spread = isBoss and 0 or Config.LaneSpread
-	local lane, laneLength = buildLane((math.random() * 2 - 1) * spread)
 	local part = Instance.new("Part")
 	part.Name = "Enemy"
 	part.Shape = Enum.PartType.Ball
@@ -291,7 +260,7 @@ local function spawnEnemy(tier, isBoss, round)
 	end
 	part.Anchored = true
 	part.CanCollide = false
-	part.Position = lane[1] + Vector3.new(0, ENEMY_HEIGHT, 0)
+	part.Position = path[1] + Vector3.new(0, ENEMY_HEIGHT, 0)
 	part.Parent = enemiesFolder
 	local entry = {
 		Part = part,
@@ -304,11 +273,9 @@ local function spawnEnemy(tier, isBoss, round)
 		Speed = isBoss and Config.Boss.Speed or tierInfo(tier).Speed,
 		Pending = 0,
 		Born = os.clock(),
-		Lane = lane,
-		LaneLength = laneLength,
-		Travelled = 0,            -- studs walked along its own lane
+		Radius = enemyRadius(isBoss),
 		Index = 1,
-		Dist = pathLength - laneLength, -- progress toward the castle (bigger = closer), comparable across lanes
+		Dist = 0,                 -- studs walked along the path (bigger = closer to the castle)
 		Dead = false,
 	}
 	table.insert(enemies, entry)
@@ -342,35 +309,45 @@ local function damageEnemy(enemy, damage, owner)
 	end
 end
 
+-- Moves every enemy along the path, front of the line first. An enemy that catches up with the
+-- one ahead of it waits behind it (single file, no overlapping) until the gap opens again.
+local marching = {}
 local function updateEnemies(dt)
-	for i = #enemies, 1, -1 do
-		local e = enemies[i]
-		if not e then continue end
+	table.clear(marching)
+	table.move(enemies, 1, #enemies, 1, marching)
+	table.sort(marching, function(a, b) return a.Dist > b.Dist end)
+	local ahead = nil
+	for _, e in ipairs(marching) do
 		local step = e.Speed * dt
+		if ahead then
+			step = math.min(step, math.max(0, ahead.Dist - (ahead.Radius + e.Radius) - e.Dist))
+		end
 		while step > 0 and e.Index < #path do
-			local target = e.Lane[e.Index + 1] + Vector3.new(0, ENEMY_HEIGHT, 0)
+			local target = path[e.Index + 1] + Vector3.new(0, ENEMY_HEIGHT, 0)
 			local current = e.Part.Position
 			local delta = target - current
 			local d = delta.Magnitude
 			if d <= step then
 				e.Part.Position = target
 				step -= d
-				e.Travelled += d
+				e.Dist += d
 				e.Index += 1
 			else
 				e.Part.Position = current + delta.Unit * step
-				e.Travelled += step
+				e.Dist += step
 				step = 0
 			end
 		end
-		e.Dist = pathLength - (e.LaneLength - e.Travelled)
 		if e.Index >= #path then
 			-- reached the end of the path: costs lives (the tier it shows, or the boss's remaining health)
-			table.remove(enemies, i)
+			local idx = table.find(enemies, e)
+			if idx then table.remove(enemies, idx) end
 			e.Dead = true
 			e.Part:Destroy()
 			loseLives(e.Boss and math.ceil(e.Health - 1e-6) or e.ShownTier)
 			if workspace:GetAttribute("State") ~= "Playing" then return end
+		else
+			ahead = e
 		end
 	end
 end
@@ -573,6 +550,14 @@ setTargetingRemote.OnServerEvent:Connect(function(player, model, mode)
 end)
 
 -- ===== Rounds =====
+-- Waits (game time) until the newest enemy has walked far enough that a new one fits behind it.
+local function waitForRoom(isBoss, mySession)
+	while lastSpawned and not lastSpawned.Dead
+		and lastSpawned.Dist < lastSpawned.Radius + enemyRadius(isBoss) do
+		if not gameWait(0.05, mySession) then return end
+	end
+end
+
 local function startGame()
 	if workspace:GetAttribute("State") ~= "Menu" then return end
 	clearAll()
@@ -617,14 +602,18 @@ local function startGame()
 		task.spawn(function()
 			for _ = 1, count do
 				if session ~= mySession then return end
-				-- keep new enemies from stacking at the entrance
-				while lastSpawned and not lastSpawned.Dead and lastSpawned.Travelled < Config.MinSpawnGap do
-					if not gameWait(0.05, mySession) then return end
-				end
+				waitForRoom(false, mySession)
+				if session ~= mySession then return end
 				spawnEnemy(math.random(minTier, maxTier), false, r)
 				progress.Spawned += 1
 				publish()
 				if not gameWait(interval, mySession) then return end
+			end
+			if r == Config.Boss.Round then
+				-- the boss closes the final wave (it is the slowest, so nothing has to queue behind it)
+				waitForRoom(true, mySession)
+				if session ~= mySession then return end
+				spawnEnemy(Config.MaxTier, true, r)
 			end
 			progress.Done = true
 		end)
@@ -653,9 +642,6 @@ local function startGame()
 				for _, p in ipairs(Players:GetPlayers()) do
 					giveMoney(p, Config.RoundBonus + (r - 2) * Config.RoundBonusStep)
 				end
-			end
-			if r == Config.Boss.Round then
-				spawnEnemy(Config.MaxTier, true, r) -- the boss leads the final wave
 			end
 			progress = spawnRound(r)
 
