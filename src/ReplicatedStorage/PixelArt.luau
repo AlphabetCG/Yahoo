@@ -104,6 +104,40 @@ defs.Herobrine = {
 	},
 }
 
+-- Voidseer: spiky white hair, black blindfold, dark high-collar coat, one hand raised (16 x 22)
+defs.Voidseer = {
+	rows = {
+		"....k.kk.kk.k...",
+		"...khkhhkhhkhk..",
+		"..khhhhhhhhhhhk.",
+		".khhhhhhhhhhhhhk",
+		".khhHhhhhhhHhhhk",
+		".khHhhhHhhhhhHhk",
+		"..kHHhHHhhHHhHk.",
+		".k.kbbbbbbbbbk..",
+		"kskkbebbbbbebk..",
+		"kskksssssssssk..",
+		"kSkkSsssssssSk..",
+		"kcckkccccccckk..",
+		"kcckcpccccpccck.",
+		".kkccccpcccccck.",
+		"..kcpccccccpcSk.",
+		"..kccccpcccccck.",
+		"..kkCCCCCCCCCkk.",
+		"...knnnnpnnnnk..",
+		"...knnnk.knnnk..",
+		"...knpnk.knpnk..",
+		"...kgggk.kgggk..",
+		"..kggggk.kggggk.",
+	},
+	palette = {
+		k = rgb(20, 16, 28), h = rgb(246, 244, 252), H = rgb(196, 190, 222),
+		b = rgb(30, 28, 40), e = rgb(112, 108, 132), s = rgb(246, 206, 170), S = rgb(214, 168, 134),
+		c = rgb(40, 38, 58), p = rgb(92, 72, 146), C = rgb(28, 26, 42), n = rgb(34, 32, 48),
+		g = rgb(72, 72, 86),
+	},
+}
+
 -- Wisp: the enemy. Its color comes from the enemy tier (12 x 12)
 defs.Wisp = {
 	rows = {
