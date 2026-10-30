@@ -152,9 +152,34 @@ local function gameWait(seconds, mySession)
 end
 
 -- ===== Money =====
-local function giveMoney(player, amount)
-	if player and player.Parent then
+-- income this stage per player and source, printed at the end when Config.DebugEconomy is on
+local stageIncome = {} -- [userId] = { Start = n, Pops = n, RoundBonus = n, Refund = n }
+
+local function trackIncome(player, source, amount)
+	local byPlayer = stageIncome[player.UserId]
+	if not byPlayer then
+		byPlayer = {}
+		stageIncome[player.UserId] = byPlayer
+	end
+	byPlayer[source] = (byPlayer[source] or 0) + amount
+end
+
+-- source = "Pops" | "RoundBonus" | "Refund" (only used for the economy debug print)
+local function giveMoney(player, amount, source)
+	if player and player.Parent and amount ~= 0 then
 		player:SetAttribute("Money", (player:GetAttribute("Money") or 0) + amount)
+		trackIncome(player, source or "Other", amount)
+	end
+end
+
+local function printEconomy()
+	for _, p in ipairs(Players:GetPlayers()) do
+		local inc = stageIncome[p.UserId] or {}
+		local total = 0
+		for _, n in pairs(inc) do total += n end
+		print(("[Economy] %s round %d: start %d + pops %d + round bonus %d + refunds %d = %d"):format(
+			p.Name, workspace:GetAttribute("Round") or 0, inc.Start or 0, inc.Pops or 0,
+			inc.RoundBonus or 0, inc.Refund or 0, total))
 	end
 end
 
@@ -184,6 +209,7 @@ end
 
 local function endGame(newState, reason)
 	if workspace:GetAttribute("State") == "Playing" then
+		if Config.DebugEconomy then printEconomy() end
 		-- hand out the stage rewards once, before clients see the result screen
 		for _, p in ipairs(Players:GetPlayers()) do
 			local rewards = PlayerData.GrantStageRewards(p, {
@@ -289,7 +315,7 @@ local function damageEnemy(enemy, damage, owner)
 	enemy.Health -= damage
 	local pops = math.floor(enemy.Carry + 1e-6)
 	enemy.Carry -= pops
-	giveMoney(owner, pops * Config.RewardPerPop)
+	giveMoney(owner, pops * Config.RewardPerPop, "Pops")
 	if enemy.Health <= 1e-6 then
 		enemy.Dead = true
 		stageKills += 1
@@ -312,13 +338,57 @@ end
 -- Moves every enemy along the path, front of the line first. An enemy that catches up with the
 -- one ahead of it waits behind it (single file, no overlapping) until the gap opens again.
 local marching = {}
+-- ===== Status effects (Refine abilities) =====
+-- Burn and Slow last in game time, so x2 / x3 speed also speeds them up.
+local function publishStatus(e)
+	local burning = (e.BurnUntil or 0) > gameTime
+	local slowed = (e.SlowUntil or 0) > gameTime
+	local status = (burning and slowed and "BurnSlow") or (burning and "Burn") or (slowed and "Slow") or ""
+	if status ~= e.Status then
+		e.Status = status
+		e.Part:SetAttribute("Status", status)
+	end
+end
+
+-- a hit with an ability lands on enemy e (a stronger effect replaces a weaker one; the timer refreshes)
+local function applyAbility(e, ability, owner)
+	if not ability or e.Dead then return end
+	if ability.Kind == "Burn" then
+		if (e.BurnUntil or 0) <= gameTime or ability.Dps >= (e.BurnDps or 0) then
+			e.BurnDps = ability.Dps
+			e.BurnOwner = owner
+		end
+		e.BurnUntil = math.max(e.BurnUntil or 0, gameTime + ability.Duration)
+	elseif ability.Kind == "Slow" and not e.Boss then
+		if (e.SlowUntil or 0) <= gameTime or ability.Pct >= (e.SlowPct or 0) then
+			e.SlowPct = math.clamp(ability.Pct, 0, 0.9)
+		end
+		e.SlowUntil = math.max(e.SlowUntil or 0, gameTime + ability.Duration)
+	end
+	publishStatus(e)
+end
+
+local function updateStatus(dt)
+	for i = #enemies, 1, -1 do
+		local e = enemies[i]
+		if e and e.Status and e.Status ~= "" then
+			if (e.BurnUntil or 0) > gameTime then
+				damageEnemy(e, e.BurnDps * dt, e.BurnOwner) -- may remove e from the list
+			end
+			if not e.Dead then publishStatus(e) end
+		end
+	end
+end
+
 local function updateEnemies(dt)
 	table.clear(marching)
 	table.move(enemies, 1, #enemies, 1, marching)
 	table.sort(marching, function(a, b) return a.Dist > b.Dist end)
 	local ahead = nil
 	for _, e in ipairs(marching) do
-		local step = e.Speed * dt
+		local speed = e.Speed
+		if (e.SlowUntil or 0) > gameTime then speed *= 1 - e.SlowPct end
+		local step = speed * dt
 		if ahead then
 			step = math.min(step, math.max(0, ahead.Dist - (ahead.Radius + e.Radius) - e.Dist))
 		end
@@ -410,7 +480,10 @@ local function updateTowers()
 				local targetPos = best.Part.Position
 				faceTarget(t.Model, targetPos)
 				best.Pending += t.Stats.Damage
-				table.insert(pendingHits, { Enemy = best, Damage = t.Stats.Damage, Owner = t.Owner, Due = now + Config.ShotTravel })
+				table.insert(pendingHits, {
+					Enemy = best, Damage = t.Stats.Damage, Ability = t.Stats.Ability,
+					Owner = t.Owner, Due = now + Config.ShotTravel,
+				})
 				shotRemote:FireAllClients(t.Model, best.Part, targetPos)
 			end
 		end
@@ -427,6 +500,7 @@ local function updateHits()
 			e.Pending = math.max(0, e.Pending - h.Damage)
 			if not e.Dead then
 				damageEnemy(e, h.Damage, h.Owner)
+				applyAbility(e, h.Ability, h.Owner)
 			end
 		end
 	end
@@ -491,6 +565,17 @@ placeTowerRemote.OnServerInvoke = function(player, unitId, pos)
 	if not unit then return false, "Unknown unit" end
 	local money = player:GetAttribute("Money") or 0
 	if money < unit.Cost then return false, "Not enough money" end
+	-- each unit can be on the map at most Config.PlaceLimit(unitName) times per player
+	local placedOfUnit = 0
+	for _, t in ipairs(towers) do
+		if t.Owner == player and t.Model.Parent and t.UnitName == unitName then
+			placedOfUnit += 1
+		end
+	end
+	local limit = Config.PlaceLimit(unitName)
+	if placedOfUnit >= limit then
+		return false, ("Only %d %s allowed"):format(limit, unitName)
+	end
 	local ok, reason = Config.CanPlace(pos, towersFolder)
 	if not ok then return false, reason end
 	player:SetAttribute("Money", money - unit.Cost)
@@ -498,26 +583,33 @@ placeTowerRemote.OnServerInvoke = function(player, unitId, pos)
 	return true
 end
 
-upgradeTowerRemote.OnServerInvoke = function(player, model)
+-- Refine (in-match upgrade). all = true buys as many levels as the player can afford (REFINE MAX).
+-- Returns true, levels bought.
+upgradeTowerRemote.OnServerInvoke = function(player, model, all)
 	if not RateLimit.allow(player, "UpgradeTower", 10) then return false, "Slow down" end
 	if workspace:GetAttribute("State") ~= "Playing" then return false, "Game is not running" end
 	if typeof(model) ~= "Instance" then return false, "Bad request" end
 	local t = towerByModel[model]
 	if not t or not model.Parent then return false, "Unit not found" end
 	if t.Owner ~= player then return false, "This is not your unit" end
-	local nextLevel = t.Level + 1
-	local nextStats = Config.GetStats(t.UnitName, nextLevel)
-	if not nextStats then return false, "Already max level" end
-	local money = player:GetAttribute("Money") or 0
-	if money < nextStats.Cost then return false, "Not enough money" end
+	if not Config.GetStats(t.UnitName, t.Level + 1) then return false, "Already max level" end
 
-	player:SetAttribute("Money", money - nextStats.Cost)
-	t.Level = nextLevel
-	t.Spent += nextStats.Cost
+	local bought = 0
+	while true do
+		local nextStats = Config.GetStats(t.UnitName, t.Level + 1)
+		local money = player:GetAttribute("Money") or 0
+		if not nextStats or money < nextStats.Cost then break end
+		player:SetAttribute("Money", money - nextStats.Cost)
+		t.Level += 1
+		t.Spent += nextStats.Cost
+		t.Stats = nextStats
+		bought += 1
+		if all ~= true then break end
+	end
+	if bought == 0 then return false, "Not enough money" end
 	model:SetAttribute("Spent", t.Spent)
-	t.Stats = nextStats
-	model:SetAttribute("Level", nextLevel)
-	return true
+	model:SetAttribute("Level", t.Level)
+	return true, bought
 end
 
 -- Selling returns Config.SellRefund (50%) of everything spent on the unit (placement + upgrades)
@@ -533,7 +625,7 @@ sellTowerRemote.OnServerInvoke = function(player, model)
 	local idx = table.find(towers, t)
 	if idx then table.remove(towers, idx) end
 	model:Destroy()
-	giveMoney(player, refund)
+	giveMoney(player, refund, "Refund")
 	return true, refund
 end
 
@@ -569,8 +661,10 @@ local function startGame()
 	workspace:SetAttribute("Countdown", 0)
 	workspace:SetAttribute("WaveState", "")
 	workspace:SetAttribute("GameSpeed", 1)
+	table.clear(stageIncome)
 	for _, p in ipairs(Players:GetPlayers()) do
 		p:SetAttribute("Money", Config.StartMoney)
+		trackIncome(p, "Start", Config.StartMoney)
 	end
 	-- stage timer (game time)
 	stageTime = 0
@@ -640,7 +734,7 @@ local function startGame()
 			if r > 1 then
 				-- bonus for reaching the next round
 				for _, p in ipairs(Players:GetPlayers()) do
-					giveMoney(p, Config.RoundBonus + (r - 2) * Config.RoundBonusStep)
+					giveMoney(p, Config.RoundBonus + (r - 2) * Config.RoundBonusStep, "RoundBonus")
 				end
 			end
 			progress = spawnRound(r)
@@ -768,6 +862,8 @@ RunService.Heartbeat:Connect(function(dt)
 	updateEnemies(gdt)
 	if workspace:GetAttribute("State") ~= "Playing" then return end
 	updateHits()
+	if workspace:GetAttribute("State") ~= "Playing" then return end
+	updateStatus(gdt)
 	if workspace:GetAttribute("State") ~= "Playing" then return end
 	updateTowers()
 end)
