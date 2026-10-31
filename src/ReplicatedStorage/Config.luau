@@ -242,14 +242,14 @@ end
 
 -- ===== Rarity =====
 -- Every unit in Config.Units needs a Rarity from this list.
---   Order = sort order (higher = rarer), MaxLevel = account level cap, SellGold = Gold paid when a copy is sold
+--   Short = tag on small cards, Order = sort order (higher = rarer), MaxLevel = account level cap, SellGold = Gold paid when a copy is sold
 Config.RarityOrder = { "Rare", "Epic", "Legendary", "Mythic", "Secret" }
 Config.Rarities = {
-	Rare = { Color = Color3.fromRGB(80, 160, 255), Order = 1, MaxLevel = 30, SellGold = 5 },
-	Epic = { Color = Color3.fromRGB(180, 90, 255), Order = 2, MaxLevel = 40, SellGold = 15 },
-	Legendary = { Color = Color3.fromRGB(255, 196, 40), Order = 3, MaxLevel = 50, SellGold = 40 },
-	Mythic = { Color = Color3.fromRGB(255, 70, 110), Order = 4, MaxLevel = 60, SellGold = 100 },
-	Secret = { Color = Color3.fromRGB(30, 30, 30), Order = 5, MaxLevel = 60, SellGold = 250 },
+	Rare = { Short = "RARE", Color = Color3.fromRGB(80, 160, 255), Order = 1, MaxLevel = 30, SellGold = 5 },
+	Epic = { Short = "EPIC", Color = Color3.fromRGB(180, 90, 255), Order = 2, MaxLevel = 40, SellGold = 15 },
+	Legendary = { Short = "LEGEND", Color = Color3.fromRGB(255, 196, 40), Order = 3, MaxLevel = 50, SellGold = 40 },
+	Mythic = { Short = "MYTHIC", Color = Color3.fromRGB(255, 70, 110), Order = 4, MaxLevel = 60, SellGold = 100 },
+	Secret = { Short = "SECRET", Color = Color3.fromRGB(30, 30, 30), Order = 5, MaxLevel = 60, SellGold = 250 },
 }
 
 function Config.RarityOf(unitName)

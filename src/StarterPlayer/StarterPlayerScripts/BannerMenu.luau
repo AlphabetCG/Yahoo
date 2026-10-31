@@ -1,9 +1,8 @@
 -- BannerMenu: the SUMMON screen (main menu). Lists the open banners (Config.Banners), shows the
--- featured unit, time left, chances (RATES popup) and pity progress, pulls x1 / x10 and reveals the
--- results card by card. The server rolls (ServerScriptService.Banners via the Summon remote).
+-- featured unit, time left, chances (RATES popup) and pity progress, and pulls x1 / x10. The results
+-- play in the CHARACTER SUMMON animation (SummonStage module). The server rolls (ServerScriptService.Banners
+-- via the Summon remote).
 -- ClientMain passes its UI helpers in (ui table), like PlayMenu.
-
-local TweenService = game:GetService("TweenService")
 
 local BannerMenu = {}
 
@@ -127,51 +126,15 @@ function BannerMenu.init(ui)
 		ratesBox.Visible = true
 	end
 
-	-- ===== results reveal =====
-	local resultsBox = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = C.BLACK, BackgroundTransparency = 0.2, BorderSizePixel = 0, Visible = false, ZIndex = 30, Active = true }, panel)
-	label(resultsBox, { Position = UDim2.fromOffset(0, 20), Size = UDim2.new(1, 0, 0, 36), Text = "RESULTS", TextSize = 30, TextColor3 = C.GOLD, ZIndex = 31 })
-	local resultsGrid = make("Frame", { Position = UDim2.fromOffset(40, 76), Size = UDim2.new(1, -80, 0, 380), BackgroundTransparency = 1, ZIndex = 31 }, resultsBox)
-	make("UIGridLayout", {
-		CellSize = UDim2.fromOffset(130, 170), CellPadding = UDim2.fromOffset(12, 14),
-		HorizontalAlignment = Enum.HorizontalAlignment.Center, VerticalAlignment = Enum.VerticalAlignment.Center,
-		SortOrder = Enum.SortOrder.LayoutOrder,
-	}, resultsGrid)
-	local resultsOk = pixelButton(resultsBox, "OK", UDim2.fromOffset(180, 50), UDim2.new(0.5, 0, 1, -44), 22, C.GREEN_BTN, C.GREEN_EDGE, C.WHITE)
-	resultsOk.ZIndex = 31
-	resultsOk.MouseButton1Click:Connect(function()
-		resultsBox.Visible = false
-		show() -- gems and pity counters changed
-	end)
-
-	local function reveal(results)
-		for _, c in ipairs(resultsGrid:GetChildren()) do
-			if c:IsA("Frame") then c:Destroy() end
-		end
-		resultsBox.Visible = true
-		for i, r in ipairs(results) do
-			local rarity = Config.Rarities[r.Rarity]
-			local card = make("Frame", { LayoutOrder = i, BackgroundColor3 = C.PANEL_LIGHT, BorderSizePixel = 0, ZIndex = 32 }, resultsGrid)
-			make("UIStroke", { Color = rarity.Color, Thickness = Config.Rarities[r.Rarity].Order >= 3 and 5 or 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, card)
-			local pop = make("UIScale", { Scale = 0 }, card)
-			local art = sprite(card, r.Unit, 4, UDim2.new(0.5, 0, 0, 62))
-			art.ZIndex = 33
-			label(card, { Position = UDim2.new(0, 0, 1, -54), Size = UDim2.new(1, 0, 0, 22), Text = string.upper(r.Unit), TextSize = 15, TextColor3 = rarity.Color, ZIndex = 33 })
-			label(card, { Position = UDim2.new(0, 0, 1, -32), Size = UDim2.new(1, 0, 0, 20), Text = string.upper(r.Rarity), TextSize = 13, TextColor3 = C.TEXT_DIM, ZIndex = 33 })
-			if r.New then
-				label(card, { Position = UDim2.fromOffset(6, 4), Size = UDim2.fromOffset(40, 16), Text = "NEW", TextSize = 13, TextColor3 = C.GREEN, ZIndex = 34 })
-			end
-			if r.Pity then
-				label(card, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -6, 0, 4), Size = UDim2.fromOffset(50, 16), Text = "PITY", TextSize = 13, TextColor3 = C.GOLD, ZIndex = 34 })
-			end
-			-- one by one: rarer cards pop a bit slower
-			task.delay((i - 1) * 0.12, function()
-				TweenService:Create(pop, TweenInfo.new(rarity.Order >= 3 and 0.45 or 0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
-			end)
-		end
-	end
+	-- ===== summon animation (SummonStage module: chest > reels > results) =====
+	local pull -- defined below
+	local stage = require(script.Parent:WaitForChild("SummonStage")).new(ui, panel, {
+		Pull = function(count) pull(selected, count) end,
+		Back = function() show() end, -- gems and pity counters changed
+	})
 
 	-- ===== banner page =====
-	local function pull(bannerId, count)
+	pull = function(bannerId, count)
 		if busy then return end
 		busy = true
 		say("")
@@ -182,7 +145,7 @@ function BannerMenu.init(ui)
 		elseif not success then
 			say(tostring(result or "Summon failed"), C.RED)
 		elseif typeof(result) == "table" and result.Results then
-			reveal(result.Results)
+			stage.play(result.Results, count, bannerId)
 		end
 	end
 
@@ -284,7 +247,7 @@ function BannerMenu.init(ui)
 	local function close()
 		dim.Visible = false
 		ratesBox.Visible = false
-		resultsBox.Visible = false
+		stage.hide()
 	end
 	closeButton.MouseButton1Click:Connect(close)
 
@@ -302,7 +265,7 @@ function BannerMenu.init(ui)
 	end
 	function api.setProfile(p)
 		profile = p
-		if dim.Visible and not resultsBox.Visible then show() end
+		if dim.Visible and not stage.isOpen() then show() end
 		if dim.Visible then gemsLabel.Text = "GEMS: " .. fmt(p.Gems or 0) end
 	end
 	return api
