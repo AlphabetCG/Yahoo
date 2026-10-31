@@ -444,14 +444,6 @@ local playButton = pixelButton(menu, "PLAY", UDim2.fromOffset(340, 84), UDim2.fr
 
 local inventoryButton = pixelButton(menu, "INVENTORY", UDim2.fromOffset(340, 64), UDim2.new(0.5, 0, 0.46, 150), 30)
 
-label(menu, {
-	AnchorPoint = Vector2.new(0.5, 0.5),
-	Position = UDim2.new(0.5, 0, 0.46, 82),
-	Size = UDim2.fromOffset(700, 30),
-	Text = "Stop the enemies before they reach the end of the path!",
-	TextSize = 20,
-})
-
 
 -- =====================================================================
 --  HUD (respects the Roblox top bar so nothing is hidden under it)
