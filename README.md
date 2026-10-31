@@ -34,10 +34,10 @@ Then open the place in Roblox Studio and click **Connect** in the Rojo plugin.
 | **Game speed** | x1 / x2 / x3 for everyone. The stage timer runs in real time. |
 | **Units** | **Herobrine** (Rare), **Zaruto**, **Fluffy**, **Ichitoe** (Epic) and **Voidseer** (Legendary). Each has 5 in-match **Upgrade** levels (UPGRADE buys one, MAX buys as many as you can afford; units show `UP1`–`UP5`). The last levels add an ability: Burn (damage over time) or Slow. 6 targeting modes (First / Last / Strongest / Weakest / Closest / None), selling at a 50 % refund. Each player can have up to 3 copies of each unit on the map (`DefaultPlaceLimit`; a unit can set its own `PlaceLimit`). |
 | **Money** | Per player, earned per whole HP removed (`RewardPerPop` 2, burn damage included) plus a round bonus for everyone (160, +30 per round). A solo full clear earns about 13,200. Turn on `Config.DebugEconomy` to print income by source at stage end. |
-| **Saved profile** | Gems, owned units (one record per unit: id, level, XP, trait, lock), items, settings and lifetime stats. Kept in a DataStore with a session lock, autosave, retries and versioned migrations. |
+| **Saved profile** | Gems, Gold, owned units (one record per unit: id, level, XP, trait, lock), items, settings and lifetime stats. Kept in a DataStore with a session lock, autosave, retries and versioned migrations. |
 | **Rewards** | Gems, Wisp Essence and Void Crystal at stage end, based on result, round reached, kills and whether the boss died. Every equipped unit also gets XP (`20 + 4 × round`, doubled on a clear). |
 | **Summon** | 100 Gems per roll from a weighted pool (Rare 71 % / Epic 24 % / Legendary 5 %). The first copy of a new unit is equipped automatically if a loadout slot is free. |
-| **Inventory & loadout** | **Loadout** of 6 slots: only equipped units appear in the in-match shop (keys 1–6). **Units** tab: one card per copy, sortable (rarity / level / newest) and filterable by rarity; a detail panel to equip / unequip, feed Wisp Essence, lock, and sell (for gems; locked and equipped units can't be sold). **Materials** tab. |
+| **Inventory & loadout** | **Loadout** of 6 slots: only equipped units appear in the in-match shop (keys 1–6). **Units** tab: one card per copy, sortable (rarity / level / newest) and filterable by rarity; a detail panel to equip / unequip, feed Wisp Essence, lock, and sell for **Gold** (Rare 5 · Epic 15 · Legendary 40; locked and equipped units can't be sold). Gold is a separate currency with no use yet (#50). **Materials** tab. |
 | **Unit leveling** | Each copy has a saved level (cap by rarity: Rare 30, Epic 40, Legendary 50, Mythic 60). +3 % damage and +0.1 range per level. XP from stages and from feeding Wisp Essence (10 XP each). Separate from in-match upgrades. |
 | **Settings** | Auto Skip, health bars (hover / always), resume, surrender. |
 | **Host** | The player who has been in the server longest is the host. Only the host can start, retry, return to menu, surrender, or change speed and Auto Skip. |
@@ -126,6 +126,11 @@ Other state lives on other objects:
 Nearly everything is in [Config.luau](src/ReplicatedStorage/Config.luau):
 
 - **New unit:** add a sprite to `PixelArt` (`defs.<Name>`) and an entry to `Config.Units`. Then add it to `Config.UnitOrder` to show it in the shop, and to `Config.Summon.Pool` to make it summonable.
+- **Unit image instead of pixel grid:** add `Image = { Id, Size, FrameSize, Frames }` to the unit in `Config.Units` (format described above `Config.UnitOrder`). As soon as `Id` is set, the map, shop, inventory and placement preview use the image. Leave `Id = ""` to keep the pixel grid. A unit with neither an image nor a grid shows a grey "?" placeholder.
+  1. Draw the character facing **right** on a transparent PNG. For a sprite sheet, put the frames side by side, all the same size (e.g. idle, then attack).
+  2. Upload it in Studio: **View → Asset Manager → Bulk Import** (or the Creator Dashboard → Development Items → Images).
+  3. Right-click the image → **Copy Asset ID** and paste it as `Id = "rbxassetid://<number>"`. Use the *image* id, not a decal id.
+  4. Set `Size` (on-screen size in art pixels, around 14–20 × 18–24 to match the other units) and `FrameSize` (the size of one frame in the file, ideally an exact multiple of `Size`).
 - **New material:** add it to `Config.Materials` and `Config.MaterialOrder`. Grant it with `PlayerData.AddMaterial(player, key, n)`.
 - **Waves and economy:** `EnemiesBase`, `EnemiesPerRound`, `HpPerRound`, `WaveClearTime`, `EnemySpacing`, `RewardPerPop`, `RoundBonus`, `StartMoney`, `DefaultPlaceLimit`, and `Tiers[*].Speed` / `HP`.
 - **Upgrade abilities:** add `Ability = { Kind = "Burn", Dps, Duration }` or `{ Kind = "Slow", Pct, Duration }` to a `Levels[i]` entry.

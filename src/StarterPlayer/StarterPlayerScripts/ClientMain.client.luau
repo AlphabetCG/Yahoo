@@ -444,6 +444,16 @@ local playButton = pixelButton(menu, "PLAY", UDim2.fromOffset(340, 84), UDim2.fr
 
 local inventoryButton = pixelButton(menu, "INVENTORY", UDim2.fromOffset(340, 64), UDim2.new(0.5, 0, 0.46, 150), 30)
 
+-- currencies, top-right of the main menu (filled in by applyProfile)
+local menuCurrency = label(menu, {
+	AnchorPoint = Vector2.new(1, 0),
+	Position = UDim2.new(1, -24, 0, 64),
+	Size = UDim2.fromOffset(360, 28),
+	TextSize = 22,
+	RichText = true,
+	TextXAlignment = Enum.TextXAlignment.Right,
+	Text = "",
+})
 
 -- =====================================================================
 --  HUD (respects the Roblox top bar so nothing is hidden under it)
@@ -1317,6 +1327,15 @@ local function buildInventory()
 		TextColor3 = rgb(120, 220, 255),
 		TextXAlignment = Enum.TextXAlignment.Right,
 	})
+	local goldLabel = label(inventoryPanel, {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -20, 0, 46),
+		Size = UDim2.fromOffset(200, 30),
+		Text = "GOLD: 0",
+		TextSize = 18,
+		TextColor3 = Config.GoldColor,
+		TextXAlignment = Enum.TextXAlignment.Right,
+	})
 	local unitsTab = pixelButton(inventoryPanel, "UNITS", UDim2.fromOffset(220, 44), UDim2.new(0, 140, 0, 82), 22)
 	local materialsTab = pixelButton(inventoryPanel, "MATERIALS", UDim2.fromOffset(200, 44), UDim2.new(0, 370, 0, 82), 22)
 
@@ -1662,7 +1681,7 @@ local function buildInventory()
 		if os.clock() < sellConfirmUntil and sellable then
 			sellButtonInv.Text = "CONFIRM?"
 		else
-			sellButtonInv.Text = "SELL +" .. rarity.SellValue
+			sellButtonInv.Text = ("SELL +%dG"):format(rarity.SellGold)
 		end
 		setButtonColor(sellButtonInv, sellable and RED_BTN or GREY_BTN)
 	end
@@ -1689,6 +1708,7 @@ local function buildInventory()
 		setButtonColor(unitsTab, inventoryTab == "Units" and GREEN_BTN or BTN)
 		setButtonColor(materialsTab, inventoryTab == "Materials" and GREEN_BTN or BTN)
 		gemsLabel.Text = "GEMS: " .. fmt(profile and profile.Gems or 0)
+		goldLabel.Text = "GOLD: " .. fmt(profile and profile.Gold or 0)
 		local canSummon = profile ~= nil and profile.Gems >= Config.Summon.Cost
 		setButtonColor(summonButton, canSummon and GREEN_BTN or GREY_BTN)
 		if selectedInvUid and not (profile and profile.Units[selectedInvUid]) then
@@ -1762,8 +1782,8 @@ local function buildInventory()
 		end
 		if os.clock() < sellConfirmUntil then
 			sellConfirmUntil = 0
-			local ok, gems = invCall(Remote.SellUnits, { u.Id })
-			if ok then invNotify(("Sold %s for %d gems"):format(string.upper(u.Name), gems), GOLD) end
+			local ok, gold = invCall(Remote.SellUnits, { u.Id })
+			if ok then invNotify(("Sold %s for %d Gold"):format(string.upper(u.Name), gold), Config.GoldColor) end
 		else
 			sellConfirmUntil = os.clock() + 3
 			refreshDetail()
@@ -1829,6 +1849,7 @@ local function applyProfile(p)
 		WorldView.setAlwaysHealthBars(alwaysHealthBars)
 		refreshHealthBarsButton()
 	end
+	menuCurrency.Text = ('<font color="#78DCFF">GEMS %s</font>   <font color="#FFC43C">GOLD %s</font>'):format(fmt(p.Gems or 0), fmt(p.Gold or 0))
 	rebuildShop()
 	if inventoryDim.Visible then refreshInventory() end
 end
