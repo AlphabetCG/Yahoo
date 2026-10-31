@@ -231,6 +231,37 @@ defs.Ichitoe = {
 	},
 	palette = { k = rgb(20, 16, 28), o = rgb(250, 140, 40), O = rgb(214, 104, 24), s = rgb(246, 206, 170), d = rgb(30, 24, 28), x = rgb(36, 34, 44), w = rgb(240, 240, 244), R = rgb(170, 40, 44), W = rgb(236, 236, 242), G = rgb(150, 152, 164), g = rgb(150, 104, 60) },
 }
+-- Summon chest, in two pieces so the lid can fly open: lid (20 x 7) above the base (20 x 8)
+local CHEST_PALETTE = {
+	k = rgb(46, 30, 16), w = rgb(176, 112, 52), W = rgb(140, 86, 38),
+	g = rgb(236, 186, 78), G = rgb(196, 146, 52), l = rgb(255, 236, 160),
+}
+defs.ChestLid = {
+	rows = {
+		"........kkkk........",
+		"........kGGk........",
+		".kkkkkkkkkkkkkkkkkk.",
+		".kGggggggggggggggGk.",
+		".kgwwwwgwwwwgwwwwgk.",
+		".kgwwwwgwwwwgwwwwgk.",
+		".kkkkkkkkkkkkkkkkkk.",
+	},
+	palette = CHEST_PALETTE,
+}
+defs.ChestBase = {
+	rows = {
+		".kgwwwwgkkkkgwwwwgk.",
+		".kgwwwwgkllkgwwwwgk.",
+		".kgWwwwgkGGkgwwwWgk.",
+		".kgwwwwgkkkkgwwwwgk.",
+		".kgwwwwgwwwwgwwwwgk.",
+		".kgWwwwgwwwwgwwwWgk.",
+		".kGggggggggggggggGk.",
+		".kkkkkkkkkkkkkkkkkk.",
+	},
+	palette = CHEST_PALETTE,
+}
+
 -- Wisp: the enemy. Its color comes from the enemy tier (12 x 12)
 defs.Wisp = {
 	rows = {

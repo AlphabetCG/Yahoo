@@ -28,6 +28,7 @@ local RunService = game:GetService("RunService")
 
 local Config = require(ReplicatedStorage:WaitForChild("Config"))
 local RateLimit = require(script.Parent:WaitForChild("RateLimit"))
+local Banners = require(script.Parent:WaitForChild("Banners"))
 
 local STORE_NAME = "PlayerData_v1" -- same store as before: v1 saves are migrated in place
 local PROFILE_VERSION = 2
@@ -535,43 +536,46 @@ function PlayerData.SetSetting(player, key, value)
 	return true
 end
 
--- Summon: spend gems, get one random unit from Config.Summon.Pool
-function PlayerData.Summon(player)
+-- Summon on a banner (Config.Banners): count = 1 or 10 pulls. Rolls happen in the Banners module;
+-- pity counters live in profile.Summon.Pity[bannerId].
+-- Returns true, { Results = { { Unit, UnitId, Rarity, New, Pity } }, Gems, Pity }
+-- (plus Unit / UnitId / Rarity / New / Copies of the first result, for single pulls).
+function PlayerData.Summon(player, bannerId, count)
 	local profile = profiles[player]
 	if not profile then return false, "Your data is still loading" end
-	if profile.Gems < Config.Summon.Cost then return false, "Not enough gems" end
-	if countUnits(profile.Units, "") >= Config.MaxUnitsOwned then return false, "Unit storage is full" end
-	local total = 0
-	for name, weight in pairs(Config.Summon.Pool) do
-		if Config.Units[name] then total += weight end
-	end
-	if total <= 0 then return false, "Nothing to summon yet" end
-	local roll = math.random() * total
-	local picked
-	for name, weight in pairs(Config.Summon.Pool) do
-		if Config.Units[name] then
-			roll -= weight
-			if roll <= 0 then picked = name break end
+	bannerId = bannerId or Config.DefaultBanner
+	count = count or 1
+	local banner = Config.Banners[bannerId]
+	if not banner then return false, "Unknown banner" end
+	if count ~= 1 and count ~= 10 then return false, "Bad request" end
+	if not Config.BannerActive(bannerId, os.time()) then return false, "This banner has ended" end
+	local cost = count == 10 and banner.Cost10 or banner.Cost
+	if profile.Gems < cost then return false, "Not enough gems" end
+	if countUnits(profile.Units, "") + count > Config.MaxUnitsOwned then return false, "Unit storage is full" end
+
+	local counters = profile.Summon.Pity[bannerId] or {}
+	profile.Summon.Pity[bannerId] = counters
+	profile.Gems -= cost
+	local results = {}
+	for _ = 1, count do
+		local name, rarity, pity = Banners.roll(bannerId, counters)
+		local _, before = countUnits(profile.Units, name)
+		local unit = newUnit(profile.Units, name)
+		if before == 0 and firstEmptySlot(profile) then
+			profile.Loadout[firstEmptySlot(profile)] = unit.Id -- first copy of a new unit: equip it right away
 		end
+		table.insert(results, { Unit = name, UnitId = unit.Id, Rarity = rarity, New = before == 0, Pity = pity, Copies = before + 1 })
 	end
-	picked = picked or next(Config.Summon.Pool)
-	local _, before = countUnits(profile.Units, picked)
-	profile.Gems -= Config.Summon.Cost
-	local unit = newUnit(profile.Units, picked)
-	if before == 0 and firstEmptySlot(profile) then
-		profile.Loadout[firstEmptySlot(profile)] = unit.Id -- first copy of a new unit: equip it right away
-	end
-	profile.Summon.Total += 1
-	profile.Stats.Summons += 1
+	profile.Summon.Total += count
+	profile.Stats.Summons += count
 	touch(player)
 	saveSoon(player)
+	local first = results[1]
 	return true, {
-		Unit = picked,
-		UnitId = unit.Id,
-		Rarity = Config.Units[picked].Rarity,
-		Copies = before + 1,
-		New = before == 0,
+		Results = results,
 		Gems = profile.Gems,
+		Pity = deepCopy(counters),
+		Unit = first.Unit, UnitId = first.UnitId, Rarity = first.Rarity, New = first.New, Copies = first.Copies,
 	}
 end
 
@@ -763,10 +767,12 @@ function PlayerData.init(remotesFolder)
 		if typeof(key) == "string" then PlayerData.SetSetting(player, key, value) end
 	end)
 	local summoning = {}
-	summon.OnServerInvoke = function(player)
+	summon.OnServerInvoke = function(player, bannerId, count)
 		if summoning[player] or not RateLimit.allow(player, "Summon", 3) then return false, "Please wait" end
 		summoning[player] = true
-		local ok, result = PlayerData.Summon(player)
+		if bannerId ~= nil and typeof(bannerId) ~= "string" then bannerId = nil end
+		if count ~= nil and typeof(count) ~= "number" then count = nil end
+		local ok, result = PlayerData.Summon(player, bannerId, count)
 		task.delay(0.4, function() summoning[player] = nil end)
 		return ok, result
 	end

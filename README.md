@@ -38,7 +38,7 @@ Then open the place in Roblox Studio and click **Connect** in the Rojo plugin.
 | **Money** | Per player, but **shared income**: every whole HP removed (`RewardPerPop` 2, burn included) and every round bonus (160, +30 per round) pays **every** player in the match the same amount, scaled by party size (`Config.TeamIncome`: 1.0 / 0.65 / 0.5 / 0.42). A solo full clear earns about 13,200. `Config.DebugEconomy` prints income by source at stage end. |
 | **Saved profile** | Gems, Gold, owned units (one record per unit: id, level, XP, trait, lock), items, settings and lifetime stats. Kept in a DataStore with a session lock, autosave, retries and versioned migrations. |
 | **Rewards** | Gems, Wisp Essence and Void Crystal at stage end, based on result, round reached, kills and whether the boss died. Every equipped unit also gets XP (`20 + 4 × round`, doubled on a clear). |
-| **Summon** | 100 Gems per roll from a weighted pool (Rare 71 % / Epic 24 % / Legendary 5 %). The first copy of a new unit is equipped automatically if a loadout slot is free. |
+| **Summon** | **SUMMON** on the main menu opens the banners (`Config.Banners`): an always-on **Standard** banner (Rare 71 % / Epic 24 % / Legendary 5 %) and limited-time banners with a **rate-up** unit (50 % of its rarity). x1 (100 Gems) or x10 (900 Gems). **Pity** per banner: a Legendary is guaranteed within 60 pulls (50 on rate-up banners). The screen shows time left, all chances (RATES), pity progress and reveals results card by card. The first copy of a new unit is equipped automatically if a loadout slot is free. |
 | **Inventory & loadout** | **Loadout** of 6 slots, **one copy of each unit** (equipping another copy swaps it in): only equipped units appear in the in-match shop (keys 1–6). **Units** tab: one card per copy, sortable (rarity / level / newest) and filterable by rarity (only units you own); a detail panel to equip / unequip, feed Wisp Essence, lock, and sell for **Gold** (Rare 5 · Epic 15 · Legendary 40; locked and equipped units can't be sold). Gold is a separate currency with no use yet (#50). **Materials** tab. |
 | **Unit leveling** | Each copy has a saved level (cap by rarity: Rare 30, Epic 40, Legendary 50, Mythic 60). +3 % damage and +0.1 range per level. XP from stages and from feeding Wisp Essence (10 XP each). Separate from in-match upgrades. |
 | **Settings** | Auto Skip, health bars (hover / always), resume, surrender. |
@@ -63,9 +63,11 @@ src/
     PlayerData.luau           DataStore profiles (v2 + migrations, session lock), rewards, summon, settings
     RateLimit.luau            Per-player, per-remote request limits
     Lobby.luau                Lobby rooms: privacy, invites, matchmaking, start
+    Banners.luau              Banner rolls (rarity, rate-up, pity) + a pull simulation
   StarterPlayer/StarterPlayerScripts/
     ClientMain.client.luau    All UI: menu, HUD, shop, upgrade panel, settings, inventory, result screen, input
     PlayMenu.luau             PLAY flow UI: mode > map > stage > lobby room, invite popups
+    BannerMenu.luau           SUMMON screen: banners, rates, pity, x1 / x10, results reveal
   ServerStorage/
     Eclipse Animator Saves/   Plugin data (not game code)
   Workspace/
@@ -111,7 +113,7 @@ Other state lives on other objects:
 | `SetSpeed`, `SetAutoSkip`, `SetTargeting` | Event | Speed: host only. Auto Skip: the player's own setting. Targeting: per unit |
 | `PlaceTower(unitId, pos)`, `UpgradeTower(model, all)`, `SellTower` | Function | Unit actions (validated on the server). `unitId` is a key of `profile.Units`; `all = true` buys as many upgrade levels as affordable |
 | `Shot` | UnreliableEvent | Tells clients to draw a shot |
-| `GetProfile`, `Summon` | Function | Profile data |
+| `GetProfile`, `Summon(bannerId, count)` | Function | Profile data / banner pulls (count 1 or 10) |
 | `EquipUnit(uid, slot)`, `LockUnit(uid, locked)`, `SellUnits({uid})`, `FeedUnit(uid, amount)` | Function | Inventory actions (refused during a stage) |
 | `ProfileUpdated`, `StageRewards`, `SetSetting` | Event | Profile data |
 
@@ -163,6 +165,7 @@ Nearly everything is in [Config.luau](src/ReplicatedStorage/Config.luau):
 - **New material:** add it to `Config.Materials` and `Config.MaterialOrder`. Grant it with `PlayerData.AddMaterial(player, key, n)`.
 - **Waves and economy:** `EnemiesBase`, `EnemiesPerRound`, `HpPerRound`, `WaveClearTime`, `EnemySpacing`, `RewardPerPop`, `RoundBonus`, `StartMoney`, `DefaultPlaceLimit`, and `Tiers[*].Speed` / `HP`.
 - **Upgrade abilities:** add `Ability = { Kind = "Burn", Dps, Duration }` or `{ Kind = "Slow", Pct, Duration }` to a `Levels[i]` entry.
+- **Banners:** add an entry to `Config.Banners` / `Config.BannerOrder` (rates, cost, featured unit, pity, start/end time). `Limited = true` on a unit keeps it out of every banner that doesn't feature it. Studio: `Config.DebugSummonSim = true` prints a 10,000-pull check of every banner.
 - **Unit leveling:** `Config.Leveling` (XP per stage, XP per Essence, damage / range per level), `Config.XpToNext(level)`, level caps in `Config.Rarities[*].MaxLevel`.
 - **Path:** move or add the `Workspace.Waypoints` parts in the 2nd place (`src/Map/Waypoints`), which are numbered in order.
 
