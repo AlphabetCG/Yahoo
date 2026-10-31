@@ -54,8 +54,8 @@ function SummonStage.new(ui, parent, callbacks)
 		local gold, idle = C.rgb(244, 196, 90), C.rgb(36, 46, 72)
 		setButtonColor(oneButton, animating and C.GREY_BTN or (lastCount == 1 and gold or idle))
 		setButtonColor(tenButton, animating and C.GREY_BTN or (lastCount == 10 and gold or idle))
-		oneButton.TextColor3 = (not animating and lastCount == 1) and C.BLACK or C.WHITE
-		tenButton.TextColor3 = (not animating and lastCount == 10) and C.BLACK or C.WHITE
+		oneButton.TextColor3 = C.WHITE
+		tenButton.TextColor3 = C.WHITE
 		skipButton.Visible = animating
 	end
 
