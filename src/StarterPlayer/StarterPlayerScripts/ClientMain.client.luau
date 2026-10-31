@@ -744,24 +744,17 @@ local function refreshUpgradePanel()
 		return txt .. "s"
 	end)
 
-	-- attack shape + ability: "NEXT: ..." when the next upgrade adds or changes one, otherwise the current one
-	local parts, upcoming = {}, false
-	local curAttack = Config.DescribeAttack(Config.AttackOf(unitName, level))
-	local nxtAttack = nxt and Config.DescribeAttack(Config.AttackOf(unitName, level + 1))
-	if nxtAttack and nxtAttack ~= curAttack then
-		table.insert(parts, nxtAttack)
-		upcoming = true
-	elseif curAttack ~= "SINGLE" then
-		table.insert(parts, curAttack)
-	end
+	-- ability: "NEXT: ..." when the next upgrade adds or changes one, otherwise the current one
+	-- (the attack shape isn't written here: the area indicator on the map shows it)
 	if nxt and nxt.Ability and not sameAbility(cur.Ability, nxt.Ability) then
-		table.insert(parts, Config.DescribeAbility(nxt.Ability))
-		upcoming = true
+		abilityLabel.Text = "NEXT: " .. Config.DescribeAbility(nxt.Ability)
+		abilityLabel.TextColor3 = GREEN
 	elseif cur.Ability then
-		table.insert(parts, Config.DescribeAbility(cur.Ability))
+		abilityLabel.Text = Config.DescribeAbility(cur.Ability)
+		abilityLabel.TextColor3 = ABILITY_COLORS[cur.Ability.Kind] or WHITE
+	else
+		abilityLabel.Text = ""
 	end
-	abilityLabel.Text = (upcoming and "NEXT: " or "") .. table.concat(parts, "  |  ")
-	abilityLabel.TextColor3 = upcoming and GREEN or (cur.Ability and ABILITY_COLORS[cur.Ability.Kind] or WHITE)
 
 	local mine = selectedTower:GetAttribute("OwnerId") == player.UserId
 
