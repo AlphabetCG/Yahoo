@@ -40,7 +40,7 @@ Then open the place in Roblox Studio and click **Connect** in the Rojo plugin.
 | **Inventory & loadout** | **Loadout** of 6 slots: only equipped units appear in the in-match shop (keys 1–6). **Units** tab: one card per copy, sortable (rarity / level / newest) and filterable by rarity; a detail panel to equip / unequip, feed Wisp Essence, lock, and sell for **Gold** (Rare 5 · Epic 15 · Legendary 40; locked and equipped units can't be sold). Gold is a separate currency with no use yet (#50). **Materials** tab. |
 | **Unit leveling** | Each copy has a saved level (cap by rarity: Rare 30, Epic 40, Legendary 50, Mythic 60). +3 % damage and +0.1 range per level. XP from stages and from feeding Wisp Essence (10 XP each). Separate from in-match upgrades. |
 | **Settings** | Auto Skip, health bars (hover / always), resume, surrender. |
-| **Party, host & votes** | One server = one match for up to 4 players (`Config.MaxPartySize`); the main menu shows the party. The player in the server longest is the **host**: only the host starts the stage, starts the match early, retries and returns to the menu. **Votes**: speed (most votes, ties → slower), Auto Skip (majority, ties → host), Skip Wave and Surrender (everyone; solo = instant). Players who join mid-stage spectate and join at the next round with the team's money. Enemy HP +35 % per extra player. A player who leaves takes their units with them. |
+| **Party, host & votes** | One server = one match for up to 4 players (`Config.MaxPartySize`); the main menu shows the party. The player in the server longest is the **host**: only the host starts the stage, starts the match early, sets the **speed**, retries and returns to the menu. **Votes**: Auto Skip (each player sets their own in Settings, ON by default; the match uses the majority, ties → host), Skip Wave and Surrender (everyone; solo = instant). Every player has a **colour** (`Config.PlayerColors`): their units are outlined in it and it shows in the party panel. Players who join mid-stage spectate and join at the next round with the team's money. Enemy HP +35 % per extra player. A player who leaves takes their units with them. |
 | **Rendering** | Pixel map with path, cave and castle. Sprites with idle and recoil animations, health bars, shot bolts and particles, a placement ghost with a range ring, mouse-wheel zoom, and panning (right/middle-drag, WASD or arrow keys, one-finger drag on touch; `C` re-centers). |
 
 ---
@@ -87,7 +87,7 @@ src/
 | `StageTime`, `StageSync` | Stage clock. The client extrapolates between syncs |
 | `EndReason` | `Clear` · `Defeat` · `Surrender` |
 | `HostId` | UserId of the host (the player who controls the match flow) |
-| `Voters`, `SpeedVotes`, `AutoSkipVotes`, `SkipVotes`, `SurrenderVotes` | Vote totals for the HUD. Each player's own vote is a player attribute (`VoteSpeed`, `VoteAutoSkip`, `VoteSkip`, `VoteSurrender`); `InMatch` marks the players in the stage |
+| `Voters`, `AutoSkipVotes`, `SkipVotes`, `SurrenderVotes` | Vote totals for the HUD. Each player's own vote is a player attribute (`VoteAutoSkip`, `VoteSkip`, `VoteSurrender`); `InMatch` marks the players in the stage; `PlayerColor` is their colour index |
 | `WaveState`, `WaveSpawned`, `WaveCount` | `Spawning` · `Clearing` (Auto Skip OFF timer) · `""`, plus spawn progress of the current wave |
 
 Other state lives on other objects:
@@ -101,7 +101,7 @@ Other state lives on other objects:
 |---|---|---|
 | `StartGame`, `BeginMatch`, `Retry`, `ReturnToMenu` | Event | Match flow (host only) |
 | `Surrender`, `SkipWave` | Event | Votes (toggle); pass when every player in the match agrees |
-| `SetSpeed`, `SetAutoSkip`, `SetTargeting` | Event | Speed / Auto Skip are votes; targeting is per unit |
+| `SetSpeed`, `SetAutoSkip`, `SetTargeting` | Event | Speed: host only. Auto Skip: the player's own choice (majority decides). Targeting: per unit |
 | `PlaceTower(unitId, pos)`, `UpgradeTower(model, all)`, `SellTower` | Function | Unit actions (validated on the server). `unitId` is a key of `profile.Units`; `all = true` buys as many upgrade levels as affordable |
 | `Shot` | UnreliableEvent | Tells clients to draw a shot |
 | `GetProfile`, `Summon` | Function | Profile data |

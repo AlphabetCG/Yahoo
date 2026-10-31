@@ -43,10 +43,10 @@ PlayerData.init(remotes)
 -- ===== Host & votes =====
 -- The host is the player who has been in the server the longest (workspace.HostId). Only the host
 -- starts the stage, starts the match early, retries and goes back to the menu.
--- Everything else is voted on by the players in the match (see recomputeVotes):
---   Speed (most votes, ties -> slower), Auto Skip (majority, ties -> host), Skip Wave and Surrender
---   (everyone). Each player's vote is a player attribute (VoteSpeed / VoteAutoSkip / VoteSkip /
---   VoteSurrender); the totals are published on workspace for the HUD.
+-- starts the stage, starts the match early, sets the game speed, retries and goes back to the menu.
+-- The rest is voted on by the players in the match (see recomputeVotes):
+--   Auto Skip (majority, ties -> host), Skip Wave and Surrender (everyone). Each player's vote is a
+--   player attribute (VoteAutoSkip / VoteSkip / VoteSurrender); totals are published on workspace.
 local joinOrder = {}
 local recomputeVotes -- defined below (needs the match state)
 
@@ -62,8 +62,23 @@ local function updateHost()
 	end
 end
 
+-- every player gets a colour nobody else in the server has (Config.PlayerColors index)
+local function assignColor(player)
+	local used = {}
+	for _, p in ipairs(Players:GetPlayers()) do
+		if p ~= player and p:GetAttribute("PlayerColor") then used[p:GetAttribute("PlayerColor")] = true end
+	end
+	for i = 1, #Config.PlayerColors do
+		if not used[i] then
+			player:SetAttribute("PlayerColor", i)
+			return
+		end
+	end
+	player:SetAttribute("PlayerColor", (#Players:GetPlayers() - 1) % #Config.PlayerColors + 1)
+end
+
 local function setupVotes(player)
-	player:SetAttribute("VoteSpeed", 1)
+	assignColor(player)
 	player:SetAttribute("VoteAutoSkip", Config.AutoSkipDefault)
 	player:SetAttribute("VoteSkip", false)
 	player:SetAttribute("VoteSurrender", false)
@@ -757,7 +772,6 @@ local function startGame()
 	skipRequested = false
 	for _, p in ipairs(Players:GetPlayers()) do
 		p:SetAttribute("InMatch", false)
-		p:SetAttribute("VoteSpeed", 1)
 		p:SetAttribute("VoteSkip", false)
 		p:SetAttribute("VoteSurrender", false)
 	end
@@ -945,29 +959,11 @@ local function voters()
 end
 
 -- Works out the outcome of every vote and publishes the totals:
--- workspace Voters, SpeedVotes (for the current speed), AutoSkipVotes (ON), SkipVotes, SurrenderVotes.
+-- workspace Voters, AutoSkipVotes (players with it ON), SkipVotes, SurrenderVotes.
 recomputeVotes = function()
 	local list = voters()
 	local n = #list
 	local playing = workspace:GetAttribute("State") == "Playing"
-
-	-- speed: the most votes wins, a tie goes to the slower speed
-	local speedVotes = {}
-	for _, p in ipairs(list) do
-		local v = p:GetAttribute("VoteSpeed") or 1
-		speedVotes[v] = (speedVotes[v] or 0) + 1
-	end
-	local speed, best = 1, -1
-	for _, option in ipairs(Config.SpeedOptions) do
-		if (speedVotes[option] or 0) > best then
-			speed, best = option, speedVotes[option] or 0
-		end
-	end
-	if not playing then speed = 1 end
-	if workspace:GetAttribute("GameSpeed") ~= speed then
-		publishStage()
-		workspace:SetAttribute("GameSpeed", speed)
-	end
 
 	-- auto skip: majority, a tie follows the host's vote
 	local on = 0
@@ -985,7 +981,6 @@ recomputeVotes = function()
 		if p:GetAttribute("VoteSurrender") then surrender += 1 end
 	end
 	workspace:SetAttribute("Voters", n)
-	workspace:SetAttribute("SpeedVotes", speedVotes[speed] or 0)
 	workspace:SetAttribute("AutoSkipVotes", on)
 	workspace:SetAttribute("SkipVotes", skip)
 	workspace:SetAttribute("SurrenderVotes", surrender)
@@ -1007,13 +1002,13 @@ setAutoSkipRemote.OnServerEvent:Connect(function(player, value)
 	recomputeVotes()
 end)
 
--- Game speed vote (x1 / x2 / x3)
+-- Game speed (x1 / x2 / x3): the host sets it
 setSpeedRemote.OnServerEvent:Connect(function(player, speed)
-	if not RateLimit.allow(player, "SetSpeed", 3) then return end
+	if not hostRequest(player, "SetSpeed") then return end
 	if workspace:GetAttribute("State") ~= "Playing" then return end
 	if not table.find(Config.SpeedOptions, speed) then return end
-	player:SetAttribute("VoteSpeed", speed)
-	recomputeVotes()
+	publishStage()
+	workspace:SetAttribute("GameSpeed", speed)
 end)
 
 workspace:SetAttribute("AutoSkip", Config.AutoSkipDefault)

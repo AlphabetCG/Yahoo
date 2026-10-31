@@ -324,7 +324,8 @@ local function buildPlaceholder()
 end
 
 -- Returns a fresh copy of a sprite.
--- opts: flip (mirror left-right), tier + color (Wisp), frame ("Idle" / "Attack"... for image sprite sheets)
+-- opts: flip (mirror left-right), tier + color (Wisp), frame ("Idle" / "Attack"... for image sprite sheets),
+--       silhouette (a Color3: the whole sprite in that one colour; used for player-colour outlines)
 function PixelArt.sprite(name, opts)
 	opts = opts or {}
 	local image = imageDef(name)
@@ -332,13 +333,19 @@ function PixelArt.sprite(name, opts)
 	local key = table.concat({
 		name, tostring(opts.tier or 0), opts.flip and "f" or "n",
 		image and ("img:" .. image.Id .. ":" .. tostring(opts.frame or "Idle")) or "grid",
+		opts.silhouette and opts.silhouette:ToHex() or "",
 	}, "|")
 	local tpl = templates[key]
 	if not tpl then
 		if image then
 			tpl = buildImage(image, opts)
+			if opts.silhouette then tpl.ImageColor3 = opts.silhouette end -- images can only be tinted
 		elseif def then
 			local palette = type(def.palette) == "function" and def.palette(opts) or def.palette
+			if opts.silhouette then
+				local color = opts.silhouette
+				palette = setmetatable({}, { __index = function() return color end })
+			end
 			tpl = buildGrid(def.rows, palette, opts.flip)
 		else
 			warn("PixelArt: no image or character grid for " .. tostring(name) .. ", showing a placeholder")
@@ -349,6 +356,24 @@ function PixelArt.sprite(name, opts)
 	local copy = tpl:Clone()
 	copy.Name = name
 	return copy
+end
+
+-- A 1-art-pixel outline around a sprite, in `color`: four silhouettes shifted up / down / left / right.
+-- Returns a Frame of (w + 2) x (h + 2) to place at (-1, -1) behind the sprite.
+function PixelArt.outline(name, color, flip)
+	local w, h = PixelArt.size(name)
+	local root = Instance.new("Frame")
+	root.Name = "Outline"
+	root.BackgroundTransparency = 1
+	root.BorderSizePixel = 0
+	root.Size = UDim2.fromOffset(w + 2, h + 2)
+	root.Position = UDim2.fromOffset(-1, -1)
+	for _, offset in ipairs({ { 0, 1 }, { 2, 1 }, { 1, 0 }, { 1, 2 } }) do
+		local copy = PixelArt.sprite(name, { flip = flip, silhouette = color })
+		copy.Position = UDim2.fromOffset(offset[1], offset[2])
+		copy.Parent = root
+	end
+	return root
 end
 
 -- Width and height of a sprite in art pixels

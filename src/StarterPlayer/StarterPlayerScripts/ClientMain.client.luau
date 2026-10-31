@@ -488,9 +488,19 @@ local function buildPartyPanel()
 				BackgroundColor3 = (p == player) and PANEL_LIGHT or rgb(24, 28, 44),
 				BorderSizePixel = 0,
 			}, rows)
+			-- the player's colour: their units on the map are outlined in it
+			local colorIndex = p and p:GetAttribute("PlayerColor")
+			if colorIndex and Config.PlayerColors[colorIndex] then
+				make("Frame", {
+					Position = UDim2.fromOffset(6, 6),
+					Size = UDim2.fromOffset(8, 20),
+					BackgroundColor3 = Config.PlayerColors[colorIndex],
+					BorderSizePixel = 0,
+				}, row)
+			end
 			label(row, {
-				Position = UDim2.fromOffset(10, 0),
-				Size = UDim2.new(1, -80, 1, 0),
+				Position = UDim2.fromOffset(20, 0),
+				Size = UDim2.new(1, -90, 1, 0),
 				Text = p and p.DisplayName or "- empty -",
 				TextSize = 16,
 				TextColor3 = p and WHITE or TEXT_DIM,
@@ -516,7 +526,14 @@ local function buildPartyPanel()
 			note.Text = isHost() and "You are the host: press PLAY" or "The host starts the stage"
 		end
 	end
-	Players.PlayerAdded:Connect(refresh)
+	local function watch(p)
+		p:GetAttributeChangedSignal("PlayerColor"):Connect(refresh)
+	end
+	for _, p in ipairs(Players:GetPlayers()) do watch(p) end
+	Players.PlayerAdded:Connect(function(p)
+		watch(p)
+		refresh()
+	end)
 	Players.PlayerRemoving:Connect(function() task.defer(refresh) end)
 	workspace:GetAttributeChangedSignal("HostId"):Connect(refresh)
 	refresh()
@@ -815,13 +832,17 @@ local function refreshUpgradePanel()
 	sellButton.Text = mine and ("SELL  $" .. fmt(math.floor(spent * Config.SellRefund))) or "SELL  (NOT YOURS)"
 	setButtonColor(sellButton, mine and RED_BTN or GREY_BTN)
 
-	if not nxt then
+	upName.TextColor3 = GOLD
+	if not nxt and mine then
 		upName.Text = "FULLY UPGRADED!"
 		upButton.Text = "MAX LEVEL"
 		setButtonColor(upButton, GREY_BTN)
 		setButtonColor(upMaxButton, GREY_BTN)
 	elseif not mine then
-		upName.Text = "Belongs to another player"
+		local owner = Players:GetPlayerByUserId(selectedTower:GetAttribute("OwnerId") or 0)
+		upName.Text = "Belongs to " .. (owner and owner.DisplayName or "a player who left")
+		local colorIndex = owner and owner:GetAttribute("PlayerColor")
+		if colorIndex and Config.PlayerColors[colorIndex] then upName.TextColor3 = Config.PlayerColors[colorIndex] end
 		upButton.Text = "LOCKED"
 		setButtonColor(upButton, GREY_BTN)
 		setButtonColor(upMaxButton, GREY_BTN)
@@ -1228,7 +1249,7 @@ local settingsDim = make("TextButton", {
 local settingsPanel = pixelPanel(settingsDim, {
 	AnchorPoint = Vector2.new(0.5, 0.5),
 	Position = UDim2.fromScale(0.5, 0.5),
-	Size = UDim2.fromOffset(420, 460),
+	Size = UDim2.fromOffset(420, 484),
 })
 label(settingsPanel, {
 	Position = UDim2.fromOffset(0, 14),
@@ -1239,13 +1260,22 @@ label(settingsPanel, {
 })
 
 local mainView = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, settingsPanel)
+-- AUTO SKIP shows MY choice; the line under it shows what the match uses and how many have it ON
 local autoSkipButton = pixelButton(mainView, "AUTO SKIP: ON", UDim2.fromOffset(330, 54), UDim2.new(0.5, 0, 0, 94), 22)
-local healthBarsButton = pixelButton(mainView, "HEALTH BARS: HOVER", UDim2.fromOffset(330, 54), UDim2.new(0.5, 0, 0, 158), 22)
-local resumeButton = pixelButton(mainView, "RESUME", UDim2.fromOffset(300, 64), UDim2.new(0.5, 0, 0, 244), 30, GREEN_BTN, GREEN_EDGE, WHITE)
-local surrenderButton = pixelButton(mainView, "SURRENDER", UDim2.fromOffset(300, 64), UDim2.new(0.5, 0, 0, 324), 30, RED_BTN, RED_EDGE, WHITE)
+local autoSkipTeamLabel = label(mainView, {
+	AnchorPoint = Vector2.new(0.5, 0),
+	Position = UDim2.new(0.5, 0, 0, 126),
+	Size = UDim2.new(1, -40, 0, 20),
+	Text = "",
+	TextSize = 14,
+	TextColor3 = TEXT_DIM,
+})
+local healthBarsButton = pixelButton(mainView, "HEALTH BARS: HOVER", UDim2.fromOffset(330, 54), UDim2.new(0.5, 0, 0, 182), 22)
+local resumeButton = pixelButton(mainView, "RESUME", UDim2.fromOffset(300, 64), UDim2.new(0.5, 0, 0, 268), 30, GREEN_BTN, GREEN_EDGE, WHITE)
+local surrenderButton = pixelButton(mainView, "SURRENDER", UDim2.fromOffset(300, 64), UDim2.new(0.5, 0, 0, 348), 30, RED_BTN, RED_EDGE, WHITE)
 label(mainView, {
 	AnchorPoint = Vector2.new(0.5, 0),
-	Position = UDim2.new(0.5, 0, 0, 376),
+	Position = UDim2.new(0.5, 0, 0, 400),
 	Size = UDim2.new(1, -40, 0, 50),
 	Text = "Surrender ends the stage and shows the stage failed screen.",
 	TextSize = 16,
@@ -1347,13 +1377,15 @@ local function refreshHud()
 	local multi = voters > 1
 	local inMatch = player:GetAttribute("InMatch") == true
 	local speed = workspace:GetAttribute("GameSpeed") or 1
-	speedButton.Text = multi and ("SPEED X%d  %d/%d"):format(speed, workspace:GetAttribute("SpeedVotes") or 0, voters) or ("SPEED  X" .. speed)
-	speedButton.TextSize = multi and 19 or 24
+	speedButton.Text = "SPEED  X" .. speed -- set by the host
 	setButtonColor(speedButton, SPEED_COLORS[speed] or BTN)
 	local auto = workspace:GetAttribute("AutoSkip")
-	autoSkipButton.Text = (auto and "AUTO SKIP: ON" or "AUTO SKIP: OFF")
-		.. (multi and ("  %d/%d ON"):format(workspace:GetAttribute("AutoSkipVotes") or 0, voters) or "")
-	setButtonColor(autoSkipButton, auto and GREEN_BTN or rgb(150, 80, 70))
+	local mineAuto = player:GetAttribute("VoteAutoSkip") == true
+	autoSkipButton.Text = mineAuto and "AUTO SKIP: ON" or "AUTO SKIP: OFF"
+	setButtonColor(autoSkipButton, mineAuto and GREEN_BTN or rgb(150, 80, 70))
+	autoSkipTeamLabel.Text = multi
+		and ("MATCH: %s   (%d/%d PLAYERS ON)"):format(auto and "ON" or "OFF", workspace:GetAttribute("AutoSkipVotes") or 0, voters)
+		or ""
 
 	-- skip wave: while the next round is counting down
 	local myVoteSkip = player:GetAttribute("VoteSkip") == true
@@ -1984,14 +2016,14 @@ end
 
 workspace:GetAttributeChangedSignal("State"):Connect(refreshState)
 for _, attr in ipairs({ "Lives", "Round", "Countdown", "GameSpeed", "AutoSkip", "Phase", "PrepLeft", "EndReason", "WaveState", "WaveSpawned", "WaveCount",
-	"Voters", "SpeedVotes", "AutoSkipVotes", "SkipVotes", "SurrenderVotes" }) do
+	"Voters", "AutoSkipVotes", "SkipVotes", "SurrenderVotes" }) do
 	workspace:GetAttributeChangedSignal(attr):Connect(refreshHud)
 end
-for _, attr in ipairs({ "Money", "InMatch", "VoteSpeed", "VoteAutoSkip", "VoteSkip", "VoteSurrender" }) do
+for _, attr in ipairs({ "Money", "InMatch", "VoteAutoSkip", "VoteSkip", "VoteSurrender" }) do
 	player:GetAttributeChangedSignal(attr):Connect(refreshHud)
 end
 
--- host-only buttons (start, start match, retry, menu); speed, auto skip, skip and surrender are votes
+-- host-only buttons (start, start match, speed, retry, menu); auto skip, skip and surrender are votes
 local function refreshHostButtons()
 	local host = isHost()
 	playButton.Text = host and "PLAY" or "WAITING FOR HOST"
@@ -2018,12 +2050,12 @@ end)
 menuButton.MouseButton1Click:Connect(function()
 	if isHost() then Remote.ReturnToMenu:FireServer() end
 end)
--- speed / auto skip: change MY vote (solo: that is the setting)
+-- speed: the host sets it. auto skip: change MY choice (the match goes with the majority)
 speedButton.MouseButton1Click:Connect(function()
-	if not player:GetAttribute("InMatch") then notify("Spectators can't vote") return end
-	local mine = player:GetAttribute("VoteSpeed") or workspace:GetAttribute("GameSpeed") or 1
+	if not isHost() then notify(HOST_ONLY) return end
+	local speed = workspace:GetAttribute("GameSpeed") or 1
 	local options = Config.SpeedOptions
-	local idx = table.find(options, mine) or 1
+	local idx = table.find(options, speed) or 1
 	Remote.SetSpeed:FireServer(options[idx % #options + 1])
 end)
 autoSkipButton.MouseButton1Click:Connect(function()

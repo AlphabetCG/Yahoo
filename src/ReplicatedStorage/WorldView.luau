@@ -3,6 +3,7 @@
 -- The server keeps simple invisible parts for the game logic; this module only draws them.
 
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local GuiService = game:GetService("GuiService")
 local UserInputService = game:GetService("UserInputService")
@@ -410,11 +411,29 @@ local function addTower(model)
 	container.Visible = false -- shown after the first update has put it in the right place
 	container.Parent = entityScaler
 	rect(container, 2, h - 2, w - 4, 2, BLACK, 0.6) -- shadow
-	vis.right = PixelArt.sprite(unit)
-	vis.right.Parent = container
-	vis.left = PixelArt.sprite(unit, { flip = true })
+	-- one holder per facing: the owner's colour outline behind the sprite (see Config.PlayerColors)
+	local owner = Players:GetPlayerByUserId(model:GetAttribute("OwnerId") or 0)
+	local colorIndex = owner and owner:GetAttribute("PlayerColor")
+	local outlineColor = colorIndex and Config.PlayerColors[colorIndex]
+	local function facing(flip)
+		local holder = Instance.new("Frame")
+		holder.BackgroundTransparency = 1
+		holder.BorderSizePixel = 0
+		holder.Size = UDim2.fromOffset(w, h)
+		if outlineColor then
+			local outline = PixelArt.outline(unit, outlineColor, flip)
+			outline.ZIndex = 1
+			outline.Parent = holder
+		end
+		local sprite = PixelArt.sprite(unit, { flip = flip })
+		sprite.ZIndex = 2
+		sprite.Parent = holder
+		holder.Parent = container
+		return holder
+	end
+	vis.right = facing(false)
+	vis.left = facing(true)
 	vis.left.Visible = false
-	vis.left.Parent = container
 	local label = Instance.new("TextLabel")
 	label.BackgroundTransparency = 1
 	label.Size = UDim2.fromOffset(w + 10, 7)
