@@ -5,6 +5,7 @@
 --   Settings  = { AlwaysHealthBars = bool, AutoSkip = bool }
 --   Gems      = number
 --   Gold      = number                             (earned by selling units)
+--   Progress  = { [stageId] = true }               (stages cleared; Story stages unlock in order)
 --   Units     = { [uid] = { Id, Name, Level, XP, Trait, Locked, Obtained } }   (one entry per owned unit)
 --   Loadout   = { uid or "", ... }                   (Config.LoadoutSlots entries; "" = empty slot)
 --   Items     = { [itemKey] = amount }              (keys come from Config.Materials)
@@ -44,7 +45,7 @@ local SETTING_TYPES = {
 }
 
 -- tables whose keys are open-ended (reconcile must not fill them with defaults)
-local OPEN_TABLES = { Units = true, Items = true, Loadout = true, Codes = true, Purchases = true, Pity = true }
+local OPEN_TABLES = { Units = true, Items = true, Loadout = true, Codes = true, Purchases = true, Pity = true, Progress = true }
 
 -- GetDataStore throws in a place that was never published to Roblox: then everyone plays without saving
 local storeOk, store = pcall(function()
@@ -207,6 +208,7 @@ local function defaultProfile()
 		Settings = { AlwaysHealthBars = false, AutoSkip = Config.AutoSkipDefault },
 		Gems = Config.StarterGems,
 		Gold = 0,
+		Progress = {},
 		Units = units,
 		Loadout = {}, -- filled by normalizeLoadout / fillLoadout when the profile loads
 		Items = {},
@@ -562,7 +564,15 @@ function PlayerData.Summon(player)
 	}
 end
 
--- Rewards for a finished stage. result = { Won, Round, Kills, BossKilled, Surrender }
+-- Has the player cleared this stage at least once?
+function PlayerData.HasCleared(player, stageId)
+	local profile = profiles[player]
+	return profile ~= nil and profile.Progress[stageId] == true
+end
+
+-- Rewards for a finished stage. result = { Won, Round, Kills, BossKilled, Surrender, StageId }
+-- Gems and materials are multiplied by the stage's difficulty (Config.Difficulties[d].Rewards) and
+-- its own Rewards multiplier.
 -- Returns { Gems = n, Materials = { key = n }, UnitXP = n, LevelUps = { { Name, Level } } }
 -- (also saved to the profile). Every equipped unit gets UnitXP.
 function PlayerData.GrantStageRewards(player, result)
@@ -570,8 +580,11 @@ function PlayerData.GrantStageRewards(player, result)
 	local rewards = { Gems = 0, Materials = {} }
 	if not profile or result.Surrender then return rewards end
 	local R = Config.Rewards
-	rewards.Gems = (result.Won and R.VictoryGems or R.DefeatGems) + result.Round * R.GemsPerRound
-	local essence = (result.Won and R.EssenceBase or 0) + math.floor(result.Kills / R.KillsPerEssence)
+	local stage = Config.Stages[result.StageId or ""]
+	local difficulty = stage and Config.Difficulties[stage.Difficulty]
+	local mult = (difficulty and difficulty.Rewards or 1) * (stage and stage.Rewards or 1)
+	rewards.Gems = math.floor(((result.Won and R.VictoryGems or R.DefeatGems) + result.Round * R.GemsPerRound) * mult)
+	local essence = math.floor(((result.Won and R.EssenceBase or 0) + math.floor(result.Kills / R.KillsPerEssence)) * mult)
 	if essence > 0 then rewards.Materials.WispEssence = essence end
 	if result.BossKilled then rewards.Materials.VoidCrystal = R.BossCrystals end
 
@@ -580,7 +593,11 @@ function PlayerData.GrantStageRewards(player, result)
 		profile.Items[key] = (profile.Items[key] or 0) + n
 	end
 	profile.Stats.Kills += result.Kills
-	if result.Won then profile.Stats.StagesCleared += 1 end
+	if result.Won then
+		profile.Stats.StagesCleared += 1
+		if stage then profile.Progress[result.StageId] = true end
+	end
+	rewards.StageId = result.StageId
 	if result.BossKilled then profile.Stats.BossesKilled += 1 end
 
 	local L = Config.Leveling

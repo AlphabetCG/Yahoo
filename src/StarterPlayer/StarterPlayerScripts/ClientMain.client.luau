@@ -46,7 +46,6 @@ local remotes = waitRemote(ReplicatedStorage, "Remotes")
 -- every RemoteEvent / RemoteFunction the client uses, by name (Remote.PlaceTower, ...)
 local Remote = {}
 for _, name in ipairs({
-	"StartGame",
 	"ReturnToMenu",
 	"Surrender",
 	"SetSpeed",
@@ -63,6 +62,16 @@ for _, name in ipairs({
 	"Summon",
 	"StageRewards",
 	"SkipWave",
+	"LobbyState",
+	"LobbyInvited",
+	"LobbyCreate",
+	"LobbyJoin",
+	"LobbyLeave",
+	"LobbyInvite",
+	"LobbySetPrivacy",
+	"LobbyStart",
+	"LobbyMatchmake",
+	"LobbyRefresh",
 	"EquipUnit",
 	"LockUnit",
 	"SellUnits",
@@ -455,90 +464,6 @@ local menuCurrency = label(menu, {
 	TextXAlignment = Enum.TextXAlignment.Right,
 	Text = "",
 })
-
--- Party panel (main menu): who plays the next stage together. Built in a function to keep the main
--- chunk under Luau's 200-local limit.
-local function buildPartyPanel()
-	local MAX = Config.MaxPartySize
-	local panel = pixelPanel(menu, {
-		AnchorPoint = Vector2.new(1, 0.5),
-		Position = UDim2.new(1, -24, 0.56, 0),
-		Size = UDim2.fromOffset(260, 80 + MAX * 36),
-	})
-	local title = label(panel, { Position = UDim2.fromOffset(0, 8), Size = UDim2.new(1, 0, 0, 30), TextSize = 22, TextColor3 = GOLD, Text = "PARTY" })
-	local rows = make("Frame", { Position = UDim2.fromOffset(12, 44), Size = UDim2.new(1, -24, 0, MAX * 36), BackgroundTransparency = 1 }, panel)
-	make("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, rows)
-	local note = label(panel, { Position = UDim2.new(0, 0, 1, -30), Size = UDim2.new(1, 0, 0, 22), TextSize = 13, TextColor3 = TEXT_DIM, TextWrapped = true, Text = "" })
-
-	local function refresh()
-		for _, c in ipairs(rows:GetChildren()) do
-			if c:IsA("Frame") then c:Destroy() end
-		end
-		local hostId = workspace:GetAttribute("HostId")
-		local list = Players:GetPlayers()
-		table.sort(list, function(a, b)
-			if (a.UserId == hostId) ~= (b.UserId == hostId) then return a.UserId == hostId end
-			return a.Name < b.Name
-		end)
-		for i = 1, MAX do
-			local p = list[i]
-			local row = make("Frame", {
-				LayoutOrder = i,
-				Size = UDim2.new(1, 0, 0, 32),
-				BackgroundColor3 = (p == player) and PANEL_LIGHT or rgb(24, 28, 44),
-				BorderSizePixel = 0,
-			}, rows)
-			-- the player's colour: their units on the map are outlined in it
-			local colorIndex = p and p:GetAttribute("PlayerColor")
-			if colorIndex and Config.PlayerColors[colorIndex] then
-				make("Frame", {
-					Position = UDim2.fromOffset(6, 6),
-					Size = UDim2.fromOffset(8, 20),
-					BackgroundColor3 = Config.PlayerColors[colorIndex],
-					BorderSizePixel = 0,
-				}, row)
-			end
-			label(row, {
-				Position = UDim2.fromOffset(20, 0),
-				Size = UDim2.new(1, -90, 1, 0),
-				Text = p and p.DisplayName or "- empty -",
-				TextSize = 16,
-				TextColor3 = p and WHITE or TEXT_DIM,
-				TextXAlignment = Enum.TextXAlignment.Left,
-				TextTruncate = Enum.TextTruncate.AtEnd,
-			})
-			if p then
-				label(row, {
-					AnchorPoint = Vector2.new(1, 0),
-					Position = UDim2.new(1, -8, 0, 0),
-					Size = UDim2.fromOffset(70, 32),
-					Text = (p.UserId == hostId and "HOST" or "") .. (p == player and (p.UserId == hostId and " YOU" or "YOU") or ""),
-					TextSize = 13,
-					TextColor3 = GOLD,
-					TextXAlignment = Enum.TextXAlignment.Right,
-				})
-			end
-		end
-		title.Text = ("PARTY  %d/%d"):format(math.min(#list, MAX), MAX)
-		if #list > MAX then
-			note.Text = ("%d more in the server will spectate"):format(#list - MAX)
-		else
-			note.Text = isHost() and "You are the host: press PLAY" or "The host starts the stage"
-		end
-	end
-	local function watch(p)
-		p:GetAttributeChangedSignal("PlayerColor"):Connect(refresh)
-	end
-	for _, p in ipairs(Players:GetPlayers()) do watch(p) end
-	Players.PlayerAdded:Connect(function(p)
-		watch(p)
-		refresh()
-	end)
-	Players.PlayerRemoving:Connect(function() task.defer(refresh) end)
-	workspace:GetAttributeChangedSignal("HostId"):Connect(refresh)
-	refresh()
-end
-buildPartyPanel()
 
 -- =====================================================================
 --  HUD (respects the Roblox top bar so nothing is hidden under it)
@@ -1219,13 +1144,15 @@ local function showResult(state)
 	resultTitle.Text = won and "STAGE CLEAR!" or "STAGE FAILED"
 	resultBanner.BackgroundColor3 = won and GREEN_BTN or RED_BTN
 	if won then
-		resultSub.Text = ("All %d rounds survived!"):format(Config.TotalRounds)
+		resultSub.Text = ("All %d rounds survived!"):format(workspace:GetAttribute("TotalRounds") or 0)
 	elseif reason == "Surrender" then
 		resultSub.Text = "You surrendered."
 	else
 		resultSub.Text = "The enemies broke through!"
 	end
-	rowRound.Text = ("%d / %d"):format(workspace:GetAttribute("Round") or 0, Config.TotalRounds)
+	local totalRounds = workspace:GetAttribute("TotalRounds") or 0
+	rowRound.Text = totalRounds > 0 and ("%d / %d"):format(workspace:GetAttribute("Round") or 0, totalRounds)
+		or tostring(workspace:GetAttribute("Round") or 0)
 	rowTime.Text = formatClock(workspace:GetAttribute("StageTime") or 0)
 	rowLives.Text = fmt(workspace:GetAttribute("Lives") or 0)
 	rewardsLabel.Text = rewardsText(lastRewards)
@@ -1355,17 +1282,19 @@ local function refreshHud()
 	livesText.Text = fmt(lives) .. " / " .. fmt(Config.StartLives)
 	cashValue.Text = "$" .. fmt(player:GetAttribute("Money") or 0)
 	local round = workspace:GetAttribute("Round") or 0
-	roundLabel.Text = ("ROUND %d / %d"):format(round, Config.TotalRounds)
+	local totalRounds = workspace:GetAttribute("TotalRounds") or 0
+	local lastRound = totalRounds > 0 and round >= totalRounds
+	roundLabel.Text = totalRounds > 0 and ("ROUND %d / %d"):format(round, totalRounds) or ("ROUND %d"):format(round)
 	local cd = workspace:GetAttribute("Countdown") or 0
 	local prep = currentState() == "Playing" and workspace:GetAttribute("Phase") == "Prep"
 	prepPanel.Visible = prep
 	prepTitle.Text = "MATCH STARTS IN " .. (workspace:GetAttribute("PrepLeft") or 0)
 	-- Auto Skip OFF: no timer while the wave spawns (shows "WAVE r  x/y"), then "NEXT ROUND IN n"
 	local spawning = workspace:GetAttribute("WaveState") == "Spawning" and cd == 0
-	countdownPlate.Visible = not prep and (cd > 0 or spawning or round >= Config.TotalRounds) and currentState() == "Playing"
+	countdownPlate.Visible = not prep and (cd > 0 or spawning or lastRound) and currentState() == "Playing"
 	if round == 0 then
 		countdownLabel.Text = "FIRST ROUND IN " .. cd
-	elseif round >= Config.TotalRounds then
+	elseif lastRound then
 		countdownLabel.Text = "FINAL ROUND!"
 	elseif spawning then
 		countdownLabel.Text = ("WAVE %d   %d/%d"):format(round, workspace:GetAttribute("WaveSpawned") or 0, workspace:GetAttribute("WaveCount") or 0)
@@ -1390,7 +1319,7 @@ local function refreshHud()
 	-- skip wave: while the next round is counting down
 	local myVoteSkip = player:GetAttribute("VoteSkip") == true
 	skipWaveButton.Visible = currentState() == "Playing" and workspace:GetAttribute("Phase") == "Match"
-		and inMatch and cd > 0 and round >= 1 and round < Config.TotalRounds
+		and inMatch and cd > 0 and round >= 1 and not lastRound
 	skipWaveButton.Text = multi and ("SKIP %d/%d"):format(workspace:GetAttribute("SkipVotes") or 0, voters) or "SKIP"
 	setButtonColor(skipWaveButton, myVoteSkip and GREEN_BTN or BTN)
 
@@ -1976,6 +1905,18 @@ local function buildInventory()
 end
 local inventoryDim, refreshInventory, closeInventory = buildInventory()
 
+-- PLAY: mode > map > stage > lobby (PlayMenu module next to this script)
+local playMenu = require(script.Parent:WaitForChild("PlayMenu")).init({
+	Config = Config, Remote = Remote, player = player, popupGui = popupGui,
+	make = make, label = label, pixelButton = pixelButton, pixelPanel = pixelPanel,
+	setButtonColor = setButtonColor, fmt = fmt,
+	colors = {
+		PANEL = PANEL, PANEL_LIGHT = PANEL_LIGHT, PANEL_EDGE = PANEL_EDGE, GOLD = GOLD, RED = RED, GREEN = GREEN,
+		WHITE = WHITE, BLACK = BLACK, TEXT_DIM = TEXT_DIM, BTN = BTN, GREY_BTN = GREY_BTN,
+		GREEN_BTN = GREEN_BTN, GREEN_EDGE = GREEN_EDGE, RED_BTN = RED_BTN, RED_EDGE = RED_EDGE, rgb = rgb,
+	},
+})
+
 -- saved data from the server
 local function applyProfile(p)
 	profile = p
@@ -1985,6 +1926,7 @@ local function applyProfile(p)
 		refreshHealthBarsButton()
 	end
 	menuCurrency.Text = ('<font color="#78DCFF">GEMS %s</font>   <font color="#FFC43C">GOLD %s</font>'):format(fmt(p.Gems or 0), fmt(p.Gold or 0))
+	playMenu.setProfile(p)
 	rebuildShop()
 	if inventoryDim.Visible then refreshInventory() end
 end
@@ -2004,6 +1946,7 @@ local function refreshState()
 	menuGui.Enabled = state == "Menu"
 	hudGui.Enabled = state ~= "Menu"
 	if state ~= "Menu" then closeInventory() end
+	playMenu.onState(state)
 	if state == "Playing" then lastRewards = nil end
 	showResult(state)
 	if state ~= "Playing" then
@@ -2015,7 +1958,7 @@ local function refreshState()
 end
 
 workspace:GetAttributeChangedSignal("State"):Connect(refreshState)
-for _, attr in ipairs({ "Lives", "Round", "Countdown", "GameSpeed", "AutoSkip", "Phase", "PrepLeft", "EndReason", "WaveState", "WaveSpawned", "WaveCount",
+for _, attr in ipairs({ "Lives", "Round", "TotalRounds", "Countdown", "GameSpeed", "AutoSkip", "Phase", "PrepLeft", "EndReason", "WaveState", "WaveSpawned", "WaveCount",
 	"Voters", "AutoSkipVotes", "SkipVotes", "SurrenderVotes" }) do
 	workspace:GetAttributeChangedSignal(attr):Connect(refreshHud)
 end
@@ -2026,9 +1969,6 @@ end
 -- host-only buttons (start, start match, speed, retry, menu); auto skip, skip and surrender are votes
 local function refreshHostButtons()
 	local host = isHost()
-	playButton.Text = host and "PLAY" or "WAITING FOR HOST"
-	playButton.TextSize = host and 44 or 26
-	setButtonColor(playButton, host and GREEN_BTN or GREY_BTN)
 	retryButton.Text = host and "RETRY" or "WAITING..."
 	setButtonColor(retryButton, host and GREEN_BTN or GREY_BTN)
 	menuButton.Text = host and "MAIN MENU" or "HOST DECIDES"
@@ -2042,7 +1982,7 @@ end)
 refreshHostButtons()
 
 playButton.MouseButton1Click:Connect(function()
-	if isHost() then Remote.StartGame:FireServer() end
+	playMenu.open()
 end)
 retryButton.MouseButton1Click:Connect(function()
 	if isHost() then Remote.Retry:FireServer() end

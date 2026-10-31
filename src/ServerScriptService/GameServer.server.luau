@@ -21,7 +21,6 @@ local function newRemote(className, name)
 	r.Parent = remotes
 	return r
 end
-local startGameRemote = newRemote("RemoteEvent", "StartGame")
 local returnToMenuRemote = newRemote("RemoteEvent", "ReturnToMenu")
 local surrenderRemote = newRemote("RemoteEvent", "Surrender")
 local setSpeedRemote = newRemote("RemoteEvent", "SetSpeed")
@@ -38,6 +37,7 @@ local skipWaveRemote = newRemote("RemoteEvent", "SkipWave")   -- vote to start t
 -- saved player data: settings, gems, units, items (adds its own remotes to the Remotes folder)
 local PlayerData = require(script.Parent:WaitForChild("PlayerData"))
 local RateLimit = require(script.Parent:WaitForChild("RateLimit"))
+local Lobby = require(script.Parent:WaitForChild("Lobby"))
 PlayerData.init(remotes)
 
 -- ===== Host & votes =====
@@ -54,8 +54,23 @@ local function isHost(player)
 	return player.UserId == workspace:GetAttribute("HostId")
 end
 
+local matchHost = nil -- the lobby host of the running stage
+
+-- Host = the lobby host of the running stage. If they leave, the next player in the match takes over;
+-- outside a stage it is simply the player who has been in the server the longest.
 local function updateHost()
-	local host = joinOrder[1]
+	local host = matchHost
+	if not (host and host.Parent) then
+		host = nil
+		for _, p in ipairs(joinOrder) do
+			if p.Parent and p:GetAttribute("InMatch") then
+				host = p
+				break
+			end
+		end
+		host = host or joinOrder[1]
+		if matchHost then matchHost = host end
+	end
 	local newId = host and host.UserId or 0
 	if workspace:GetAttribute("HostId") ~= newId then
 		workspace:SetAttribute("HostId", newId)
@@ -213,6 +228,11 @@ end
 -- Config.MaxPartySize players (by join order) are in it. Anyone who joins later spectates and is
 -- let in at the start of the next round (if there is room) with the same money the team has earned.
 local teamEarned = 0   -- money every player in the match has earned this stage (start money not included)
+local matchRoster = {} -- [userId] = true: the lobby members of the running stage (only they can play)
+local currentStage = Config.DefaultStage
+local currentRoom = nil -- the lobby room the running stage came from
+local stageStartMoney = Config.StartMoney
+local stageHealthMult, stageSpeedMult = 1, 1
 local moneyCarry = {}  -- [player] = part of a coin earned but not paid out yet
 
 local function participants()
@@ -240,13 +260,14 @@ local function giveTeamMoney(amount, source)
 	end
 end
 
--- Lets waiting players into the match while there is room (prep phase / start of a round).
+-- Lets lobby members who aren't in yet (arrived late / rejoined) into the match while there is room
+-- (prep phase / start of a round). Other players in the server just watch.
 local function admitPlayers()
 	local count = #participants()
 	for _, p in ipairs(joinOrder) do
 		if count >= Config.MaxPartySize then break end
-		if p.Parent and not p:GetAttribute("InMatch") then
-			local money = Config.StartMoney + math.floor(teamEarned)
+		if p.Parent and not p:GetAttribute("InMatch") and matchRoster[p.UserId] then
+			local money = stageStartMoney + math.floor(teamEarned)
 			p:SetAttribute("InMatch", true)
 			p:SetAttribute("Money", money)
 			moneyCarry[p] = 0
@@ -260,7 +281,7 @@ end
 local function setupPlayer(player)
 	player:SetAttribute("Money", Config.StartMoney)
 	player:SetAttribute("InMatch", false)
-	-- joining during the prep phase: play right away (later joiners wait for the next round)
+	-- a lobby member joining during the prep phase plays right away (later: at the next round)
 	if workspace:GetAttribute("State") == "Playing" and workspace:GetAttribute("Phase") == "Prep" then
 		admitPlayers()
 	end
@@ -297,6 +318,7 @@ local function endGame(newState, reason)
 				Kills = stageKills,
 				BossKilled = stageBossKilled,
 				Surrender = reason == "Surrender",
+				StageId = currentStage,
 			})
 			remotes.StageRewards:FireClient(p, rewards)
 		end
@@ -319,6 +341,12 @@ end
 local function goToMenu()
 	session += 1
 	clearAll()
+	matchHost = nil
+	if currentRoom then
+		Lobby.SetStarted(currentRoom, false) -- the room can start again
+		currentRoom = nil
+	end
+	updateHost()
 	workspace:SetAttribute("Countdown", 0)
 	workspace:SetAttribute("GameSpeed", 1)
 	workspace:SetAttribute("State", "Menu")
@@ -349,11 +377,12 @@ local function enemyRadius(isBoss)
 	return Config.EnemySpacing / 2 * (isBoss and Config.Boss.Scale or 1)
 end
 
--- round = the round this enemy belongs to (sets its health)
-local function spawnEnemy(tier, isBoss, round)
+-- round = the round this enemy belongs to (sets its health); bossHealth = multiplier for a boss
+local function spawnEnemy(tier, isBoss, round, bossHealth)
 	if #path < 2 then return end
-	local health = isBoss and Config.Boss.Health
+	local health = isBoss and Config.Boss.Health * (bossHealth or 1)
 		or tierInfo(tier).HP * (1 + Config.HpPerRound * math.max(0, (round or 1) - 1))
+	health *= stageHealthMult -- difficulty and stage rules
 	health *= 1 + Config.HpPerExtraPlayer * (partySize() - 1) -- tougher with more players
 	local part = Instance.new("Part")
 	part.Name = "Enemy"
@@ -382,7 +411,7 @@ local function spawnEnemy(tier, isBoss, round)
 		MaxHealth = health,
 		Carry = 0,                -- damage dealt that has not been paid out as a whole HP yet
 		Boss = isBoss or false,
-		Speed = isBoss and Config.Boss.Speed or tierInfo(tier).Speed,
+		Speed = (isBoss and Config.Boss.Speed or tierInfo(tier).Speed) * stageSpeedMult,
 		Pending = 0,
 		Born = os.clock(),
 		Radius = enemyRadius(isBoss),
@@ -655,6 +684,12 @@ placeTowerRemote.OnServerInvoke = function(player, unitId, pos)
 	local unitName = instance.Name
 	local unit = Config.Units[unitName]
 	if not unit then return false, "Unknown unit" end
+	local rules = Config.Stages[currentStage].Rules or {}
+	if rules.Rarities and not rules.Rarities[unit.Rarity] then
+		local allowed = {}
+		for rarity in pairs(rules.Rarities) do table.insert(allowed, rarity) end
+		return false, "This stage only allows " .. table.concat(allowed, " / ") .. " units"
+	end
 	local money = player:GetAttribute("Money") or 0
 	if money < unit.Cost then return false, "Not enough money" end
 	-- each unit can be on the map at most Config.PlaceLimit(unitName) times per player
@@ -755,8 +790,37 @@ local function waitForRoom(isBoss, mySession)
 	end
 end
 
-local function startGame()
+-- Boss of round r: its health multiplier, or nil when the round has no boss.
+-- Rules.BossEvery = a boss every N rounds (Infinite, Raid), otherwise one on the last round.
+local function bossFor(stage, r)
+	local rules = stage.Rules or {}
+	if rules.BossEvery then
+		if r % rules.BossEvery ~= 0 then return nil end
+		local index = r // rules.BossEvery
+		return (rules.BossHealth or 1) * (1 + 0.4 * (index - 1)) -- each boss is tougher than the last
+	end
+	if stage.Rounds > 0 and r == stage.Rounds then return rules.BossHealth or 1 end
+	return nil
+end
+
+-- Starts stage `stageId` for `members` (the lobby room); `host` runs the match.
+local function startGame(stageId, members, host)
 	if workspace:GetAttribute("State") ~= "Menu" then return end
+	stageId = Config.Stages[stageId] and stageId or Config.DefaultStage
+	local stage = Config.Stages[stageId]
+	local rules = stage.Rules or {}
+	local difficulty = Config.Difficulties[stage.Difficulty] or Config.Difficulties.Normal
+	currentStage = stageId
+	stageStartMoney = rules.StartMoney or Config.StartMoney
+	stageHealthMult = difficulty.Health * (rules.EnemyHealth or 1)
+	stageSpeedMult = difficulty.Speed * (rules.EnemySpeed or 1)
+	table.clear(matchRoster)
+	for _, p in ipairs(members or Players:GetPlayers()) do matchRoster[p.UserId] = true end
+	matchHost = host or (members and members[1]) or joinOrder[1]
+	workspace:SetAttribute("StageId", stageId)
+	workspace:SetAttribute("Mode", stage.Mode)
+	workspace:SetAttribute("TotalRounds", stage.Rounds) -- 0 = endless
+
 	clearAll()
 	session += 1
 	local mySession = session
@@ -784,12 +848,14 @@ local function startGame()
 	workspace:SetAttribute("PrepLeft", Config.PrepTime)
 	workspace:SetAttribute("Phase", "Prep")
 	workspace:SetAttribute("State", "Playing")
-	admitPlayers() -- the first Config.MaxPartySize players are in the match
+	admitPlayers() -- the lobby members are in the match
+	updateHost()
 
 	-- Spawns one round's enemies, spread over at most Config.MaxSpawnTime seconds.
 	-- Returns a progress table so the round timer can watch how many have appeared.
 	local function spawnRound(r)
 		local count = math.floor(Config.EnemiesBase + r * Config.EnemiesPerRound + 0.5)
+		if rules.EscortShare then count = math.max(1, math.floor(count * rules.EscortShare)) end -- Raid: small escort
 		-- stronger enemy types appear about twice as fast now that there are half as many rounds
 		local maxTier = math.min(Config.MaxTier, 1 + math.floor((2 * r - 1) / 3))
 		local minTier = math.max(1, maxTier - 1)
@@ -813,11 +879,12 @@ local function startGame()
 				publish()
 				if not gameWait(interval, mySession) then return end
 			end
-			if r == Config.Boss.Round then
-				-- the boss closes the final wave (it is the slowest, so nothing has to queue behind it)
+			local bossHealth = bossFor(stage, r)
+			if bossHealth then
+				-- the boss closes the wave (it is the slowest, so nothing has to queue behind it)
 				waitForRoom(true, mySession)
 				if session ~= mySession then return end
-				spawnEnemy(Config.MaxTier, true, r)
+				spawnEnemy(Config.MaxTier, true, r, bossHealth)
 			end
 			progress.Done = true
 		end)
@@ -838,8 +905,12 @@ local function startGame()
 		workspace:SetAttribute("Phase", "Match")
 		publishStage()
 
+		-- stage.Rounds rounds, or endless when it is 0 (only losing ends an Infinite stage)
+		local total = stage.Rounds
 		local progress
-		for r = 1, Config.TotalRounds do
+		local r = 0
+		while total == 0 or r < total do
+			r += 1
 			workspace:SetAttribute("Round", r)
 			skipRequested = false
 			for _, p in ipairs(Players:GetPlayers()) do p:SetAttribute("VoteSkip", false) end
@@ -856,7 +927,7 @@ local function startGame()
 			--                Config.WaveClearTime timer starts; the next round begins when it runs out
 			--                or when every enemy on the map is gone.
 			-- The setting is read once per round, so toggling it mid-wave applies from the next round.
-			if r < Config.TotalRounds then
+			if total == 0 or r < total then
 				local thisWave = progress
 				workspace:SetAttribute("WaveState", "Spawning")
 				if workspace:GetAttribute("AutoSkip") then
@@ -895,9 +966,27 @@ local function startGame()
 	end)
 end
 
-startGameRemote.OnServerEvent:Connect(function(player)
-	if hostRequest(player, "StartGame") then startGame() end
-end)
+-- ===== Lobby rooms start stages =====
+-- For now every stage runs inside this server (one at a time). Teleporting rooms to the Match place
+-- (Config.Places.Match) comes next.
+Lobby.init(remotes, {
+	CanCreate = function(player, stageId)
+		local required = Config.StageRequirement(stageId)
+		if required and not PlayerData.HasCleared(player, required) then
+			return false, "Clear " .. Config.Stages[required].Name .. " first"
+		end
+		return true
+	end,
+	StartRoom = function(room)
+		if workspace:GetAttribute("State") ~= "Menu" then
+			return false, "A stage is already running in this server"
+		end
+		currentRoom = room
+		Lobby.SetStarted(room, true)
+		startGame(room.StageId, room.Members, room.Host)
+		return true
+	end,
+})
 
 returnToMenuRemote.OnServerEvent:Connect(function(player)
 	if not hostRequest(player, "ReturnToMenu") then return end
@@ -929,8 +1018,18 @@ retryRemote.OnServerEvent:Connect(function(player)
 	if not hostRequest(player, "Retry") then return end
 	local state = workspace:GetAttribute("State")
 	if state == "GameOver" or state == "Victory" then
+		-- same stage, same players (those still here)
+		local members = {}
+		for _, p in ipairs(Players:GetPlayers()) do
+			if matchRoster[p.UserId] then table.insert(members, p) end
+		end
+		local stageId, host, room = currentStage, matchHost, currentRoom
 		goToMenu()
-		startGame()
+		if room then
+			currentRoom = room
+			Lobby.SetStarted(room, true)
+		end
+		startGame(stageId, members, host)
 	end
 end)
 

@@ -44,6 +44,88 @@ Config.PlayerColors = {
 	Color3.fromRGB(255, 160, 50),  -- orange
 }
 
+-- ===== Places =====
+-- The same scripts run in both places of the experience; they check game.PlaceId to know which one this is.
+--   Lobby = the start place (menu, inventory, summon, lobbies). Match = where stages are played.
+-- Set Match to 0 to play every stage inside the lobby server (that is also what Studio play tests do).
+Config.Places = {
+	Match = 138398273175866,
+}
+
+-- ===== Play: modes > maps > stages =====
+-- PLAY opens: Select Mode > Select Map > Select Stage > Create Lobby (Public / Friends / Invite) or
+-- Matchmaking > Invite players + Start.
+Config.ModeOrder = { "Story", "Infinite", "Challenge", "Raid" }
+Config.Modes = {
+	Story = { Name = "Story", Color = Color3.fromRGB(90, 170, 255), Desc = "Fixed rounds with a boss at the end. Clear a stage to unlock the next one." },
+	Infinite = { Name = "Infinite", Color = Color3.fromRGB(170, 100, 255), Desc = "Endless waves that keep getting stronger. A boss every 10 rounds." },
+	Challenge = { Name = "Challenge", Color = Color3.fromRGB(255, 150, 50), Desc = "Stages with special rules. Bigger rewards." },
+	Raid = { Name = "Raid", Color = Color3.fromRGB(240, 70, 80), Desc = "A boss every round, each one tougher than the last." },
+}
+
+-- Map = which path (Workspace folder of numbered parts) the stage is played on
+Config.MapOrder = { "Meadow" }
+Config.Maps = {
+	Meadow = { Name = "Sunny Meadow", Waypoints = "Waypoints", Color = Color3.fromRGB(110, 190, 80) },
+}
+
+-- Difficulty multiplies enemy health / speed and the stage rewards
+Config.DifficultyOrder = { "Normal", "Hard", "Nightmare" }
+Config.Difficulties = {
+	Normal = { Name = "Normal", Color = Color3.fromRGB(120, 220, 120), Health = 1, Speed = 1, Rewards = 1 },
+	Hard = { Name = "Hard", Color = Color3.fromRGB(255, 190, 60), Health = 1.6, Speed = 1.1, Rewards = 1.5 },
+	Nightmare = { Name = "Nightmare", Color = Color3.fromRGB(240, 70, 80), Health = 2.5, Speed = 1.2, Rewards = 2.2 },
+}
+
+-- Stages. Rounds = 0 means endless (Infinite). Order = position in the stage list of its mode + map.
+-- Story stages unlock in Order (clear stage 1 to unlock stage 2...).
+-- Rules (optional): EnemyHealth / EnemySpeed (multipliers), StartMoney, Rarities = { Epic = true } (only
+--   those rarities can be placed), BossEvery (a boss every N rounds), BossHealth (multiplier),
+--   EscortShare (Raid: how much of a normal wave walks with each boss).
+Config.Stages = {
+	Story_Meadow_1 = { Mode = "Story", Map = "Meadow", Order = 1, Name = "Stage 1", Difficulty = "Normal", Rounds = 15 },
+	Story_Meadow_2 = { Mode = "Story", Map = "Meadow", Order = 2, Name = "Stage 2", Difficulty = "Hard", Rounds = 15 },
+	Story_Meadow_3 = { Mode = "Story", Map = "Meadow", Order = 3, Name = "Stage 3", Difficulty = "Nightmare", Rounds = 15 },
+	Infinite_Meadow = { Mode = "Infinite", Map = "Meadow", Order = 1, Name = "Endless", Difficulty = "Normal", Rounds = 0,
+		Rules = { BossEvery = 10 } },
+	Challenge_Meadow_Speed = { Mode = "Challenge", Map = "Meadow", Order = 1, Name = "Speed Rush", Difficulty = "Hard", Rounds = 10,
+		Rules = { EnemySpeed = 1.5 }, Rewards = 1.3 },
+	Challenge_Meadow_Epic = { Mode = "Challenge", Map = "Meadow", Order = 2, Name = "Epic Only", Difficulty = "Normal", Rounds = 12,
+		Rules = { Rarities = { Epic = true } }, Rewards = 1.3 },
+	Challenge_Meadow_Broke = { Mode = "Challenge", Map = "Meadow", Order = 3, Name = "Low Budget", Difficulty = "Normal", Rounds = 12,
+		Rules = { StartMoney = 300 }, Rewards = 1.3 },
+	Raid_Meadow_1 = { Mode = "Raid", Map = "Meadow", Order = 1, Name = "Wisp King Raid", Difficulty = "Hard", Rounds = 5,
+		Rules = { BossEvery = 1, BossHealth = 0.6, EscortShare = 0.3 }, Rewards = 1.6 },
+}
+Config.DefaultStage = "Story_Meadow_1"
+
+-- Stages of a mode on a map, in Order
+function Config.StagesFor(mode, map)
+	local list = {}
+	for id, stage in pairs(Config.Stages) do
+		if stage.Mode == mode and stage.Map == map then
+			table.insert(list, id)
+		end
+	end
+	table.sort(list, function(a, b) return Config.Stages[a].Order < Config.Stages[b].Order end)
+	return list
+end
+
+-- The Story stage that must be cleared first (nil = always open)
+function Config.StageRequirement(stageId)
+	local stage = Config.Stages[stageId]
+	if not stage or stage.Mode ~= "Story" or stage.Order <= 1 then return nil end
+	for id, other in pairs(Config.Stages) do
+		if other.Mode == stage.Mode and other.Map == stage.Map and other.Order == stage.Order - 1 then
+			return id
+		end
+	end
+	return nil
+end
+
+-- ===== Lobbies =====
+Config.LobbyPrivacy = { "Public", "Friends", "Invite" } -- Public: anyone / matchmaking, Friends: the host's friends, Invite: invited players only
+
 -- ===== Map =====
 Config.GroundY = 0
 Config.PathTop = 0.4
