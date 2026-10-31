@@ -28,8 +28,10 @@ Then open the place in Roblox Studio and click **Connect** in the Rojo plugin.
 
 | Area | What exists today |
 |---|---|
-| **Match flow** | Menu → **Prep** phase (60 s, or press START MATCH) → **15 rounds** → Victory / Game Over. Retry, Main Menu and Surrender (with confirmation). |
-| **Waves** | Enemy count = `6 + 3.2 × round` (54 in round 15). Each enemy spawns as tier 1–5, which fixes its speed and base HP; health grows 9 % per round. Its color steps down through the tiers as it loses health. Enemies walk the path center in single file, keeping `EnemySpacing` studs apart: a faster enemy queues behind a slower one instead of overlapping it. The boss closes round 15 with 200 HP. |
+| **Play flow** | **PLAY** → Select **Mode** (Story / Infinite / Challenge / Raid) → **Map** → **Stage** → **Create Lobby** (Public / Friends / Invite only) or **Matchmaking** → lobby room: the host invites players and presses **START**. Invites pop up for the invited player. Story stages unlock in order (clear Stage 1 to open Stage 2). |
+| **Match flow** | **Prep** phase (60 s, or the host presses START MATCH) → the stage's rounds (or endless in Infinite) → Victory / Game Over → Retry (same stage, same players) or Main Menu. |
+| **Stages** | `Config.Stages`: mode, map, difficulty (Normal / Hard / Nightmare: enemy health, speed and reward multipliers), rounds (0 = endless) and rules (faster / tougher enemies, start money, allowed rarities, a boss every N rounds, Raid escorts). 1 map for now (`Config.Maps`). |
+| **Waves** | Enemy count = `6 + 3.2 × round` (54 in round 15). Each enemy spawns as tier 1–5, which fixes its speed and base HP; health grows 9 % per round. Its color steps down through the tiers as it loses health. Enemies walk the path center in single file, keeping `EnemySpacing` studs apart: a faster enemy queues behind a slower one instead of overlapping it. Bosses (200 HP × the stage's boss multiplier) close the last round, or every N rounds in Infinite / Raid; each later boss is 40 % tougher. |
 | **Auto Skip** | **ON**: the next round starts once 60–70 % of the current wave has spawned. **OFF**: no timer while the wave spawns (the HUD shows `WAVE r  x/y`); after the last enemy appears, a 20 s timer starts and the next round begins when it runs out or every enemy is gone. The match follows the host's setting. |
 | **Game speed** | x1 / x2 / x3 for everyone. The stage timer runs in real time. |
 | **Units** | **Herobrine** (Rare), **Zaruto**, **Fluffy**, **Ichitoe** (Epic) and **Voidseer** (Legendary). Each has 5 in-match **Upgrade** levels (UPGRADE buys one, MAX buys as many as you can afford; units show `UP1`–`UP5`). The last levels add an ability: Burn (damage over time) or Slow. 6 targeting modes (First / Last / Strongest / Weakest / Closest / None), selling at a 50 % refund. Each player can have up to 3 copies of each unit on the map (`DefaultPlaceLimit`; a unit can set its own `PlaceLimit`). |
@@ -60,8 +62,10 @@ src/
                               money, lives, place/upgrade/sell, remotes
     PlayerData.luau           DataStore profiles (v2 + migrations, session lock), rewards, summon, settings
     RateLimit.luau            Per-player, per-remote request limits
+    Lobby.luau                Lobby rooms: privacy, invites, matchmaking, start
   StarterPlayer/StarterPlayerScripts/
     ClientMain.client.luau    All UI: menu, HUD, shop, upgrade panel, settings, inventory, result screen, input
+    PlayMenu.luau             PLAY flow UI: mode > map > stage > lobby room, invite popups
   ServerStorage/
     Eclipse Animator Saves/   Plugin data (not game code)
   Workspace/
@@ -99,7 +103,9 @@ Other state lives on other objects:
 ### Remotes (`ReplicatedStorage.Remotes`, created at runtime)
 | Remote | Kind | Purpose |
 |---|---|---|
-| `StartGame`, `BeginMatch`, `Retry`, `ReturnToMenu` | Event | Match flow (host only) |
+| `BeginMatch`, `Retry`, `ReturnToMenu` | Event | Match flow (host only) |
+| `LobbyCreate`, `LobbyJoin`, `LobbyMatchmake`, `LobbyInvite`, `LobbyStart` | Function | Lobby rooms (server module `Lobby`) |
+| `LobbyLeave`, `LobbySetPrivacy`, `LobbyRefresh` / `LobbyState`, `LobbyInvited` | Event | Lobby rooms: requests / what each client sees |
 | `Surrender`, `SkipWave` | Event | Votes (toggle); pass when every player in the match agrees |
 | `SetSpeed`, `SetAutoSkip`, `SetTargeting` | Event | Speed: host only. Auto Skip: the player's own choice (majority decides). Targeting: per unit |
 | `PlaceTower(unitId, pos)`, `UpgradeTower(model, all)`, `SellTower` | Function | Unit actions (validated on the server). `unitId` is a key of `profile.Units`; `all = true` buys as many upgrade levels as affordable |
