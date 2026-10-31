@@ -51,7 +51,7 @@ Config.PlayerColors = {
 --   Match = the 2nd place: the map and the stages. (Synced with match.project.json.)
 -- Set Match to 0 to keep everything in one place (needs the map in that place: use match.project.json).
 Config.Places = {
-	Match = 138398273175866,
+	Match = 87393556787741,
 }
 
 -- "Lobby", "Match", or "Single" (Config.Places.Match = 0: menus and stages in the same place)
