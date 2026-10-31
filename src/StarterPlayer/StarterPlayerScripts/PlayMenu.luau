@@ -48,7 +48,8 @@ function PlayMenu.init(ui)
 	local backButton = pixelButton(panel, "< BACK", UDim2.fromOffset(110, 40), UDim2.new(0, 78, 0, 34), 18)
 	local closeButton = pixelButton(panel, "X", UDim2.fromOffset(40, 40), UDim2.new(1, -38, 0, 34), 20, C.RED_BTN, C.RED_EDGE, C.WHITE)
 	local content = make("Frame", { Position = UDim2.fromOffset(24, 72), Size = UDim2.new(1, -48, 0, 440), BackgroundTransparency = 1 }, panel)
-	local message = label(panel, { Position = UDim2.new(0, 20, 1, -40), Size = UDim2.new(1, -40, 0, 26), TextSize = 18, TextColor3 = C.TEXT_DIM, Text = "" })
+	local message = label(panel, { Position = UDim2.new(0, 20, 1, -44), Size = UDim2.new(1, -40, 0, 34), TextScaled = true, TextWrapped = true, TextColor3 = C.TEXT_DIM, Text = "" })
+	make("UITextSizeConstraint", { MaxTextSize = 18, MinTextSize = 10 }, message) -- long server messages shrink to fit
 
 	local function say(text, color)
 		message.Text = text or ""

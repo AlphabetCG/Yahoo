@@ -988,6 +988,27 @@ local function startGame(stageId, members, host)
 	end)
 end
 
+-- Lobby: check once that Config.Places.Match really is a place of THIS experience. A place that was
+-- made as a separate experience can't receive reserved-server teleports from here.
+local matchPlaceProblem = nil -- shown to the host instead of the raw teleport error when set
+if USE_TELEPORT and not RunService:IsStudio() then
+	task.spawn(function()
+		local ok, err = pcall(function()
+			local pages = game:GetService("AssetService"):GetGamePlacesAsync()
+			while true do
+				for _, place in ipairs(pages:GetCurrentPage()) do
+					if place.PlaceId == Config.Places.Match then return end
+				end
+				if pages.IsFinished then break end
+				pages:AdvanceToNextPageAsync()
+			end
+			matchPlaceProblem = ("Place %d is not part of this experience (add it under Places)"):format(Config.Places.Match)
+			warn("GameServer: " .. matchPlaceProblem)
+		end)
+		if not ok then warn("GameServer: couldn't list this experience's places: " .. tostring(err)) end
+	end)
+end
+
 -- ===== Lobby rooms start stages =====
 -- Live game: the room is teleported to its own reserved Match server (TeleportData tells that server
 -- the stage, the host and the members). Studio / Config.Places.Match = 0: the stage runs in this server.
@@ -1014,8 +1035,10 @@ local function teleportRoom(room)
 	end)
 	if not ok then
 		Lobby.SetStarted(room, false)
-		warn("GameServer: teleport to the Match place failed: " .. tostring(result))
-		return false, "Couldn't start the stage, try again"
+		local reason = tostring(result):gsub("^.-:%d+: ", "") -- drop the script location
+		warn("GameServer: teleport to the Match place failed: " .. reason)
+		if matchPlaceProblem then reason = matchPlaceProblem end
+		return false, "Couldn't start: " .. reason:sub(1, 120)
 	end
 	-- if one player's teleport fails, retry them into the same reserved server
 	local retryOptions = Instance.new("TeleportOptions")
