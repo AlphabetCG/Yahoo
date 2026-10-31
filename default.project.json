@@ -70,6 +70,7 @@
       },
       "$properties": {
         "AvatarJointUpgrade": "Enabled",
+        "EnableMouseLockOption": false,
         "CameraMaxZoomDistance": 128.0,
         "CharacterBreakJointsOnDeath": false,
         "CharacterUseJumpPower": false,

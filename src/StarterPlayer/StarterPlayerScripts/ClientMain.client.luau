@@ -455,15 +455,6 @@ local menuCurrency = label(menu, {
 	Text = "",
 })
 
-label(menu, {
-	AnchorPoint = Vector2.new(0.5, 0.5),
-	Position = UDim2.new(0.5, 0, 0.46, 82),
-	Size = UDim2.fromOffset(700, 30),
-	Text = "Stop the enemies before they reach the end of the path!",
-	TextSize = 20,
-})
-
-
 -- =====================================================================
 --  HUD (respects the Roblox top bar so nothing is hidden under it)
 -- =====================================================================
