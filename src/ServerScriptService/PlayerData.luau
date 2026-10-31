@@ -110,17 +110,28 @@ end
 -- ===== loadout =====
 -- Loadout is always an array of Config.LoadoutSlots strings: a unit id, or "" for an empty slot
 -- (no holes, so it saves to the DataStore and travels over remotes cleanly).
+-- A loadout holds at most ONE copy of each unit type (no two Herobrines).
 local function normalizeLoadout(profile)
 	local old = typeof(profile.Loadout) == "table" and profile.Loadout or {}
-	local seen = {}
+	local seenNames = {}
 	local loadout = {}
 	for slot = 1, Config.LoadoutSlots do
 		local uid = old[slot]
-		if typeof(uid) ~= "string" or not profile.Units[uid] or seen[uid] then uid = "" end
-		if uid ~= "" then seen[uid] = true end
+		local unit = typeof(uid) == "string" and profile.Units[uid]
+		if not unit or seenNames[unit.Name] then uid = "" end
+		if uid ~= "" then seenNames[unit.Name] = true end
 		loadout[slot] = uid
 	end
 	profile.Loadout = loadout
+end
+
+-- the slot holding another copy of unit type `name` (nil if none)
+local function slotOfType(profile, name, exceptUid)
+	for slot, id in ipairs(profile.Loadout) do
+		local unit = id ~= exceptUid and profile.Units[id]
+		if unit and unit.Name == name then return slot end
+	end
+	return nil
 end
 
 local function loadoutSlotOf(profile, uid)
@@ -634,8 +645,12 @@ function PlayerData.Equip(player, uid, slot)
 		if not slot then return false, "Bad slot" end
 		profile.Loadout[slot] = ""
 	else
-		if not profile.Units[uid] then return false, "You do not own this unit" end
+		local unit = profile.Units[uid]
+		if not unit then return false, "You do not own this unit" end
 		local current = loadoutSlotOf(profile, uid)
+		-- only one copy of each unit type: a second copy replaces the first one in its slot
+		local sameType = slotOfType(profile, unit.Name, uid)
+		if sameType then slot = sameType end
 		slot = slot or current or firstEmptySlot(profile)
 		if not slot then return false, "Your loadout is full: pick a slot" end
 		if current then profile.Loadout[current] = "" end

@@ -1664,9 +1664,6 @@ local function buildInventory()
 				sellConfirmUntil = 0
 				refreshInventory()
 			end)
-		else
-			label(card, { Position = UDim2.fromOffset(0, 114), Size = UDim2.new(1, 0, 0, 20), Text = "NOT OWNED", TextSize = 16, TextColor3 = RED })
-			label(card, { Position = UDim2.fromOffset(0, 136), Size = UDim2.new(1, 0, 0, 18), Text = string.upper(Config.Units[name].Rarity or ""), TextSize = 13, TextColor3 = TEXT_DIM })
 		end
 	end
 
@@ -1674,17 +1671,20 @@ local function buildInventory()
 		clearGui(unitsScroll)
 		local owned = ownedUnitsSorted()
 		for i, u in ipairs(owned) do unitCard(i, u.Name, u) end
-		-- units not owned yet (collection hint)
-		for i, name in ipairs(Config.UnitOrder) do
-			if unitCount(name) == 0 and (filterMode == "All" or Config.Units[name].Rarity == filterMode) then
-				unitCard(#owned + i, name, nil)
-			end
-		end
 		local total = 0
 		if profile then for _ in pairs(profile.Units) do total += 1 end end
 		unitsTab.Text = ("UNITS %d/%d"):format(total, Config.MaxUnitsOwned)
 		sortButton.Text = "SORT: " .. string.upper(sortMode)
 		filterButton.Text = "SHOW: " .. string.upper(filterMode)
+	end
+
+	-- slot holding ANOTHER copy of the same unit type as u (the loadout allows one copy per unit)
+	local function sameTypeSlot(u)
+		for slot, id in ipairs(profile.Loadout) do
+			local other = id ~= u.Id and profile.Units[id]
+			if other and other.Name == u.Name then return slot end
+		end
+		return nil
 	end
 
 	local function firstAbility(name)
@@ -1727,17 +1727,22 @@ local function buildInventory()
 		dAbility.Text = ability and ("UP%d: %s"):format(abilityLevel, Config.DescribeAbility(ability)) or ""
 
 		local slot = loadoutSlotOf(u.Id)
+		local sameType = not slot and sameTypeSlot(u) -- another copy of this unit is equipped
 		if pickingSlotFor == u.Id then
 			dState.Text = "PICK A LOADOUT SLOT ABOVE"
 			dState.TextColor3 = GOLD
 		elseif slot then
 			dState.Text = "EQUIPPED IN SLOT " .. slot
 			dState.TextColor3 = GREEN
+		elseif sameType then
+			dState.Text = ("ANOTHER %s IS IN SLOT %d"):format(string.upper(name), sameType)
+			dState.TextColor3 = GOLD
 		else
 			dState.Text = "NOT EQUIPPED"
 			dState.TextColor3 = TEXT_DIM
 		end
-		equipButton.Text = slot and "UNEQUIP" or (pickingSlotFor == u.Id and "CANCEL" or "EQUIP")
+		equipButton.Text = slot and "UNEQUIP" or (sameType and ("SWAP (SLOT %d)"):format(sameType))
+			or (pickingSlotFor == u.Id and "CANCEL" or "EQUIP")
 		setButtonColor(equipButton, slot and RED_BTN or GREEN_BTN)
 
 		local essence = profile.Items.WispEssence or 0
@@ -1812,8 +1817,12 @@ local function buildInventory()
 		local u = profile and selectedInvUid and profile.Units[selectedInvUid]
 		if not u then return end
 		local slot = loadoutSlotOf(u.Id)
+		local sameType = sameTypeSlot(u)
 		if slot then
 			if invCall(Remote.EquipUnit, "", slot) then invNotify("Removed from slot " .. slot) end
+		elseif sameType then
+			-- only one copy of each unit in the loadout: this copy replaces the other one
+			if invCall(Remote.EquipUnit, u.Id, sameType) then invNotify(("Swapped into slot %d"):format(sameType), GREEN) end
 		elseif pickingSlotFor == u.Id then
 			pickingSlotFor = nil
 			invNotify("")
@@ -1889,7 +1898,6 @@ local function buildInventory()
 	end
 	inventoryButton.MouseButton1Click:Connect(openInventory)
 	inventoryClose.MouseButton1Click:Connect(closeInventory)
-	inventoryDim.MouseButton1Click:Connect(closeInventory)
 	unitsTab.MouseButton1Click:Connect(function() inventoryTab = "Units"; refreshInventory() end)
 	materialsTab.MouseButton1Click:Connect(function() inventoryTab = "Materials"; refreshInventory() end)
 
