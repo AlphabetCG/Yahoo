@@ -252,7 +252,7 @@ local worldGui = make("ScreenGui", {
 }, playerGui)
 -- the Lobby place has no map (stages are played in the Match place), so nothing to draw there
 if PLACE_ROLE ~= "Lobby" then
-	waitingFor = "drawing the map (Workspace.Waypoints)"
+	waitingFor = "drawing the map: this place has no Workspace.Waypoints. Sync it with match.project.json (Rojo port 34873) and publish"
 	WorldView.start(worldGui, { rightInset = SHOP_W, topInset = 176, bottomInset = 156 })
 	waitingFor = "loading the UI"
 end
