@@ -1354,8 +1354,6 @@ end
 -- =====================================================================
 -- Built inside its own function: Luau allows only 200 locals per function, and the main
 -- chunk of this script is close to that limit.
-local bannerMenu -- the SUMMON screen; created after the inventory (see below)
-
 local function buildInventory()
 
 	local INV_W, INV_H = 780, 620
@@ -1428,8 +1426,7 @@ local function buildInventory()
 		invMessage.TextColor3 = color or TEXT_DIM
 	end
 
-	local summonButton = pixelButton(inventoryPanel, "SUMMON", UDim2.fromOffset(300, 52), UDim2.new(0.5, -110, 0, 584), 22, GREEN_BTN, GREEN_EDGE, WHITE)
-	local inventoryClose = pixelButton(inventoryPanel, "CLOSE", UDim2.fromOffset(180, 52), UDim2.new(0.5, 190, 0, 584), 24, RED_BTN, RED_EDGE, WHITE)
+	local inventoryClose = pixelButton(inventoryPanel, "CLOSE", UDim2.fromOffset(420, 56), UDim2.new(0.5, 0, 0, 584), 28, RED_BTN, RED_EDGE, WHITE)
 
 	local function clearGui(container)
 		for _, child in ipairs(container:GetChildren()) do
@@ -1902,11 +1899,6 @@ local function buildInventory()
 	unitsTab.MouseButton1Click:Connect(function() inventoryTab = "Units"; refreshInventory() end)
 	materialsTab.MouseButton1Click:Connect(function() inventoryTab = "Materials"; refreshInventory() end)
 
-	-- SUMMON opens the banner screen (BannerMenu)
-	summonButton.MouseButton1Click:Connect(function()
-		closeInventory()
-		bannerMenu.open()
-	end)
 
 	return inventoryDim, refreshInventory, closeInventory
 end
@@ -1925,7 +1917,7 @@ local uiKit = {
 	},
 }
 waitingFor = "the BannerMenu module"
-bannerMenu = require(script.Parent:WaitForChild("BannerMenu")).init(uiKit)
+local bannerMenu = require(script.Parent:WaitForChild("BannerMenu")).init(uiKit) -- the SUMMON screen
 summonMenuButton.MouseButton1Click:Connect(function()
 	bannerMenu.open()
 end)
