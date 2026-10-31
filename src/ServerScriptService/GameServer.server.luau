@@ -60,6 +60,19 @@ PlayerData.init(remotes)
 local joinOrder = {}
 local recomputeVotes -- defined below (needs the match state)
 
+-- Everyone in the server, longest-present first. Uses Players:GetPlayers() so a player is never
+-- missed when several PlayerAdded handlers run in a different order (joinOrder only sorts).
+local function playersInOrder()
+	local list = {}
+	for _, p in ipairs(joinOrder) do
+		if p.Parent then table.insert(list, p) end
+	end
+	for _, p in ipairs(Players:GetPlayers()) do
+		if not table.find(list, p) then table.insert(list, p) end
+	end
+	return list
+end
+
 local function isHost(player)
 	return player.UserId == workspace:GetAttribute("HostId")
 end
@@ -72,8 +85,8 @@ local function updateHost()
 	local host = matchHost
 	if not (host and host.Parent) then
 		host = nil
-		for _, p in ipairs(joinOrder) do
-			if p.Parent and p:GetAttribute("InMatch") then
+		for _, p in ipairs(playersInOrder()) do
+			if p:GetAttribute("InMatch") then
 				host = p
 				break
 			end
@@ -256,8 +269,8 @@ local moneyCarry = {}  -- [player] = part of a coin earned but not paid out yet
 
 local function participants()
 	local list = {}
-	for _, p in ipairs(joinOrder) do
-		if p.Parent and p:GetAttribute("InMatch") then table.insert(list, p) end
+	for _, p in ipairs(playersInOrder()) do
+		if p:GetAttribute("InMatch") then table.insert(list, p) end
 	end
 	return list
 end
@@ -283,9 +296,9 @@ end
 -- (prep phase / start of a round). Other players in the server just watch.
 local function admitPlayers()
 	local count = #participants()
-	for _, p in ipairs(joinOrder) do
+	for _, p in ipairs(playersInOrder()) do
 		if count >= Config.MaxPartySize then break end
-		if p.Parent and not p:GetAttribute("InMatch") and matchRoster[p.UserId] then
+		if not p:GetAttribute("InMatch") and matchRoster[p.UserId] then
 			local money = stageStartMoney + math.floor(teamEarned)
 			p:SetAttribute("InMatch", true)
 			p:SetAttribute("Money", money)
@@ -298,8 +311,11 @@ local function admitPlayers()
 end
 
 local function setupPlayer(player)
-	player:SetAttribute("Money", Config.StartMoney)
-	player:SetAttribute("InMatch", false)
+	-- only initialise: another PlayerAdded handler (the Match place start) may already have let them in
+	if player:GetAttribute("InMatch") == nil then
+		player:SetAttribute("Money", Config.StartMoney)
+		player:SetAttribute("InMatch", false)
+	end
 	-- a lobby member joining during the prep phase plays right away (later: at the next round)
 	if workspace:GetAttribute("State") == "Playing" and workspace:GetAttribute("Phase") == "Prep" then
 		admitPlayers()
@@ -1026,6 +1042,7 @@ local function teleportRoom(room)
 	local options = Instance.new("TeleportOptions")
 	options.ShouldReserveServer = true
 	options:SetTeleportData({
+		RoomKey = ("%s/%d/%d"):format(game.JobId, room.Id, os.time()), -- this room's Match server only
 		StageId = room.StageId,
 		HostId = room.Host.UserId,
 		Members = userIds,
@@ -1180,11 +1197,7 @@ local function voters()
 		local list = participants()
 		if #list > 0 then return list end
 	end
-	local all = {}
-	for _, p in ipairs(joinOrder) do
-		if p.Parent then table.insert(all, p) end
-	end
-	return all
+	return playersInOrder()
 end
 
 -- Works out the outcome of every vote and publishes the totals:
@@ -1234,9 +1247,11 @@ end)
 recomputeVotes()
 
 -- ===== Match place: play the stage the lobby sent =====
--- The first player to arrive carries the TeleportData (stage, host, members, lobby place). The stage
--- starts once every member is here, or after MATCH_WAIT seconds with whoever made it.
--- Opened directly (Studio, no TeleportData): Story stage 1 with everyone who joined within a few seconds.
+-- The first player to arrive carries the TeleportData (room key, stage, host, members, lobby place). The
+-- stage starts once every member is here, or after MATCH_WAIT seconds with whoever made it.
+-- Live game: only the room's members may be here, in the server the lobby reserved for them. Anyone
+-- else (joined the place directly, followed a friend, another room) is kicked.
+-- Studio (no TeleportData): Story stage 1 with everyone who joined within a few seconds.
 if IS_MATCH_PLACE then
 	local MATCH_WAIT = 20
 	local STUDIO_WAIT = 3
@@ -1258,11 +1273,26 @@ if IS_MATCH_PLACE then
 		startGame(info.StageId, present, host)
 	end
 
+	-- a server the lobby reserved (not a public server, not a bought private server)
+	local isReservedServer = game.PrivateServerId ~= "" and game.PrivateServerOwnerId == 0
+
 	Players.PlayerAdded:Connect(function(player)
+		local data = player:GetJoinData().TeleportData
+		local fromLobby = typeof(data) == "table" and typeof(data.RoomKey) == "string"
+			and Config.Stages[data.StageId] ~= nil and typeof(data.Members) == "table"
+		if not RunService:IsStudio() then
+			if not isReservedServer or not fromLobby then
+				player:Kick("Stages are started from the lobby: press PLAY there.")
+				return
+			end
+			if not table.find(data.Members, player.UserId) or (info and data.RoomKey ~= info.RoomKey) then
+				player:Kick("This stage belongs to another lobby.")
+				return
+			end
+		end
 		if not info then
-			local data = player:GetJoinData().TeleportData
-			if typeof(data) == "table" and Config.Stages[data.StageId] and typeof(data.Members) == "table" then
-				info = { StageId = data.StageId, HostId = data.HostId, Members = data.Members }
+			if fromLobby then
+				info = { RoomKey = data.RoomKey, StageId = data.StageId, HostId = data.HostId, Members = data.Members }
 				returnPlaceId = typeof(data.ReturnPlaceId) == "number" and data.ReturnPlaceId or nil
 			else
 				info = { StageId = Config.DefaultStage, HostId = player.UserId, Members = {}, Direct = true }

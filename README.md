@@ -137,7 +137,7 @@ The experience has two places. The scripts are shared; `Config.PlaceRole()` chec
 | Place | Rojo project | What it has |
 |---|---|---|
 | **Lobby**: *Yahoo* (start place) | `default.project.json` | Menus only: main menu, inventory, summon, PLAY flow and lobby rooms. **No map.** START always teleports the room to its own reserved Match server |
-| **Match**: *Match* place under Yahoo (`Config.Places.Match` = 114181242148498) | `match.project.json` (adds `src/Map/Waypoints`) | The map and the stages. Waits for the room's players (max 20 s), plays the stage from the TeleportData; **BACK TO LOBBY** sends each player back |
+| **Match**: *Match* place under Yahoo (`Config.Places.Match` = 114181242148498) | `match.project.json` (adds `src/Map/Waypoints`) | The map and the stages. Waits for the room's players (max 20 s), plays the stage from the TeleportData; **BACK TO LOBBY** sends each player back. Only the room's members can be there: joining the place directly, following a friend in, or arriving with another room's key gets you kicked (Studio is exempt) |
 
 **Syncing and publishing:**
 1. **Yahoo:** `rojo serve` (default project), connect from Yahoo in Studio, then **Publish**. Rojo removes the map from Yahoo, since it is no longer in this project.
