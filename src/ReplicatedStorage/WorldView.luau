@@ -225,6 +225,73 @@ local function spawnShot(x0, z0, x1, z1, color, target, life)
 	addEffect({ kind = "shot", frame = f, x0 = x0 / PXS, z0 = z0 / PXS, x1 = x1 / PXS, z1 = z1 / PXS, target = target, life = life or 0.11 })
 end
 
+-- A fading effect frame (art pixels). grow = { From = Vector2, To = Vector2 } changes its size;
+-- delay = seconds before it appears (e.g. when the shot lands).
+local function addFx(frame, life, grow, delay)
+	frame.ZIndex = 3900
+	frame.Visible = not delay
+	frame.Parent = entityScaler
+	addEffect({ kind = "fx", frame = frame, life = life + (delay or 0), delay = delay or 0, grow = grow,
+		base = frame.BackgroundTransparency, stroke = frame:FindFirstChildOfClass("UIStroke") })
+end
+
+-- a ring (circle outline) centred on (x, z) world studs, growing to `radius` studs
+local function ringFx(x, z, radius, color, life, delay)
+	local f = Instance.new("Frame")
+	f.AnchorPoint = Vector2.new(0.5, 0.5)
+	f.Position = UDim2.fromOffset(x / PXS, z / PXS)
+	f.BackgroundColor3 = color
+	f.BackgroundTransparency = 0.8
+	f.BorderSizePixel = 0
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0.5, 0)
+	corner.Parent = f
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = color
+	stroke.Thickness = 1.5
+	stroke.Parent = f
+	local d = radius * 2 / PXS
+	addFx(f, life, { From = Vector2.new(d * 0.2, d * 0.2), To = Vector2.new(d, d) }, delay)
+end
+
+-- a straight beam from (x0, z0) to (x1, z1) world studs, `width` studs wide
+local function beamFx(x0, z0, x1, z1, width, color, life)
+	local dx, dz = (x1 - x0) / PXS, (z1 - z0) / PXS
+	local f = Instance.new("Frame")
+	f.AnchorPoint = Vector2.new(0.5, 0.5)
+	f.Position = UDim2.fromOffset((x0 + x1) / 2 / PXS, (z0 + z1) / 2 / PXS)
+	f.Size = UDim2.fromOffset(math.sqrt(dx * dx + dz * dz), math.max(1, width / PXS))
+	f.Rotation = math.deg(math.atan2(dz, dx))
+	f.BackgroundColor3 = color
+	f.BackgroundTransparency = 0.15
+	f.BorderSizePixel = 0
+	addFx(f, life)
+end
+
+-- what an area attack looks like (shape = { K, R, W, A, L } from the server)
+local function attackFx(fromX, fromZ, toX, toZ, shape, color)
+	if shape.K == "Splash" then
+		ringFx(toX, toZ, shape.R or 6, color, 0.3, Config.ShotTravel)
+	elseif shape.K == "Line" then
+		local dx, dz = toX - fromX, toZ - fromZ
+		local len = math.sqrt(dx * dx + dz * dz)
+		if len < 0.01 then return end
+		local reach = (shape.L or len) + 2
+		beamFx(fromX, fromZ, fromX + dx / len * reach, fromZ + dz / len * reach, (shape.W or 4) * 0.6, color, 0.22)
+		beamFx(fromX, fromZ, fromX + dx / len * reach, fromZ + dz / len * reach, 0.5, WHITE, 0.12)
+	elseif shape.K == "Cone" then
+		local base = math.atan2(toZ - fromZ, toX - fromX)
+		local half = math.rad((shape.A or 60) / 2)
+		local reach = shape.L or 20
+		for i = 0, 4 do
+			local ang = base - half + (2 * half) * i / 4
+			beamFx(fromX, fromZ, fromX + math.cos(ang) * reach, fromZ + math.sin(ang) * reach, 0.6, color, 0.2)
+		end
+	elseif shape.K == "Circle" then
+		ringFx(fromX, fromZ, shape.R or shape.L or 20, color, 0.35)
+	end
+end
+
 -- ===================== ENEMIES =====================
 local function tierColor(tier)
 	return Config.Tiers[math.clamp(tier, 1, Config.MaxTier)].Color
@@ -498,11 +565,144 @@ local function placeRing(ring, worldX, worldZ)
 	ring.holder.Visible = true
 end
 
+-- ===================== AREA INDICATORS (attack shapes, Config.Units[...].Attack) =====================
+-- Shown with the range ring while placing a unit and for the selected unit: what its attack covers.
+--   Line   = a strip from the unit to the end of its range     Cone   = a wedge towards the target
+--   Splash = a circle around the enemy it hits                 Circle = the whole range around it
+-- Drawn as pixel rows (light fill, stronger edge). Line / Cone are built pointing right and turned
+-- with Rotation, so they don't have to be rebuilt when the aim changes.
+local AREA_FILL, AREA_EDGE = 0.8, 0.3
+
+-- fills `holder` with the pixels where inside(x, y) is true, for x in [x0, x1], y in [y0, y1]
+-- (holder-local position = (x - x0, y - y0)). Returns the created frames.
+local function rasterize(holder, x0, y0, x1, y1, inside, color)
+	local parts = {}
+	local function edge(x, y)
+		return not (inside(x - 1, y) and inside(x + 1, y) and inside(x, y - 1) and inside(x, y + 1))
+	end
+	for y = y0, y1 do
+		local x = x0
+		while x <= x1 do
+			if inside(x, y) then
+				local s = x
+				while x + 1 <= x1 and inside(x + 1, y) do x += 1 end
+				table.insert(parts, rect(holder, s - x0, y - y0, x - s + 1, 1, color, AREA_FILL))
+				-- the edge pixels of this run, as horizontal pieces
+				local e = s
+				while e <= x do
+					if edge(e, y) then
+						local es = e
+						while e + 1 <= x and edge(e + 1, y) do e += 1 end
+						table.insert(parts, rect(holder, es - x0, y - y0, e - es + 1, 1, color, AREA_EDGE))
+					end
+					e += 1
+				end
+			end
+			x += 1
+		end
+	end
+	return parts
+end
+
+local function newHolder(w, h)
+	local holder = Instance.new("Frame")
+	holder.Name = "Area"
+	holder.AnchorPoint = Vector2.new(0.5, 0.5)
+	holder.BackgroundTransparency = 1
+	holder.BorderSizePixel = 0
+	holder.Size = UDim2.fromOffset(w, h)
+	holder.ZIndex = 1490 -- under the range ring and the units
+	holder.Visible = false
+	holder.Parent = entityScaler
+	return holder
+end
+
+-- Builds the indicator for an attack (nil for Single). rangeStuds = the unit's range.
+local function makeArea(attack, rangeStuds, color)
+	local kind = attack and attack.Kind or "Single"
+	local area = { kind = kind }
+	if kind == "Line" then
+		local L = math.floor(rangeStuds / PXS + 0.5)
+		local half = math.max(1, math.floor((attack.Width or 4) / PXS / 2 + 0.5))
+		-- holder is 2L wide and centred on the unit, the strip fills its right half
+		area.holder = newHolder(2 * L + 1, 2 * half + 1)
+		area.parts = rasterize(area.holder, -L, -half, L, half, function(x, y)
+			return x >= 0 and x <= L and y >= -half and y <= half
+		end, color)
+		area.rotates, area.at = true, "unit"
+	elseif kind == "Cone" then
+		local R = math.floor(rangeStuds / PXS + 0.5)
+		local halfAngle = math.rad((attack.Angle or 60) / 2)
+		area.holder = newHolder(2 * R + 1, 2 * R + 1)
+		area.parts = rasterize(area.holder, -R, -R, R, R, function(x, y)
+			return x * x + y * y <= R * R and (x > 0 or (x == 0 and y == 0)) and math.abs(math.atan2(y, x)) <= halfAngle
+		end, color)
+		area.rotates, area.at = true, "unit"
+	elseif kind == "Splash" or kind == "Circle" then
+		local r = math.floor((kind == "Splash" and (attack.Radius or 6) or (attack.Radius or rangeStuds)) / PXS + 0.5)
+		area.holder = newHolder(2 * r + 1, 2 * r + 1)
+		area.parts = rasterize(area.holder, -r, -r, r, r, function(x, y)
+			return x * x + y * y <= r * r
+		end, color)
+		area.rotates, area.at = false, kind == "Splash" and "aim" or "unit"
+	else
+		return nil
+	end
+	area.range = rangeStuds
+	return area
+end
+
+-- ux/uz = the unit, ax/az = where it aims (world studs)
+local function placeArea(area, ux, uz, ax, az)
+	if not area then return end
+	local cx, cz = ux, uz
+	if area.at == "aim" then cx, cz = ax, az end
+	area.holder.Position = UDim2.fromOffset(math.floor(cx / PXS + 0.5), math.floor(cz / PXS + 0.5))
+	if area.rotates then
+		area.holder.Rotation = math.deg(math.atan2(az - uz, ax - ux))
+	end
+	area.holder.Visible = true
+end
+
+local function recolorArea(area, color)
+	if not area then return end
+	for _, part in ipairs(area.parts) do part.BackgroundColor3 = color end
+end
+
+local function destroyArea(area)
+	if area then area.holder:Destroy() end
+end
+
+-- the point on the enemy path closest to (x, z): where a unit placed there will mostly shoot
+local function nearestPathPoint(x, z)
+	local path = Config.GetPath()
+	local p = Vector2.new(x, z)
+	local best, bestD = nil, math.huge
+	for i = 1, #path - 1 do
+		local a, b = Vector2.new(path[i].X, path[i].Z), Vector2.new(path[i + 1].X, path[i + 1].Z)
+		local ab = b - a
+		local t = ab:Dot(ab) > 0 and math.clamp((p - a):Dot(ab) / ab:Dot(ab), 0, 1) or 0
+		local q = a + ab * t
+		local d = (q - p).Magnitude
+		if d < bestD then best, bestD = q, d end
+	end
+	return best
+end
+
+-- an aim point for (ux, uz) towards (tx, tz), no further than `range`
+local function aimWithin(ux, uz, tx, tz, range)
+	local dx, dz = tx - ux, tz - uz
+	local d = math.sqrt(dx * dx + dz * dz)
+	if d <= range or d < 1e-3 then return tx, tz end
+	return ux + dx / d * range, uz + dz / d * range
+end
+
 -- ===================== PUBLIC: placement preview =====================
 function WorldView.clearGhost()
 	if ghost then
 		ghost.container:Destroy()
 		ghost.ring.holder:Destroy()
+		destroyArea(ghost.area)
 		ghost = nil
 	end
 end
@@ -535,6 +735,7 @@ function WorldView.setGhost(unitName, unitLevel)
 		container = container,
 		image = image,
 		ring = makeRing(Config.ScaledStats(unitName, 1, unitLevel).Range, WHITE),
+		area = makeArea(Config.AttackOf(unitName, 1), Config.ScaledStats(unitName, 1, unitLevel).Range, WHITE),
 		orig = orig,
 		w = w,
 		h = h,
@@ -548,10 +749,19 @@ function WorldView.updateGhost(worldPos, valid)
 	ghost.container.Position = UDim2.fromOffset(ax - ghost.w // 2, az - ghost.h + 1)
 	ghost.container.Visible = true
 	placeRing(ghost.ring, worldPos.X, worldPos.Z)
+	if ghost.area then
+		-- aim at the closest bit of the path (that's where it will mostly shoot)
+		local target = nearestPathPoint(worldPos.X, worldPos.Z)
+		if target then
+			local ax, az = aimWithin(worldPos.X, worldPos.Z, target.X, target.Y, ghost.area.range)
+			placeArea(ghost.area, worldPos.X, worldPos.Z, ax, az)
+		end
+	end
 	if ghost.valid ~= valid then
 		ghost.valid = valid
 		local tint = valid and rgb(80, 230, 100) or rgb(240, 70, 70)
 		recolorRing(ghost.ring, tint)
+		recolorArea(ghost.area, tint)
 		for frame, color in pairs(ghost.orig) do
 			frame.BackgroundColor3 = color:Lerp(tint, 0.45)
 		end
@@ -563,6 +773,7 @@ end
 function WorldView.setSelected(model)
 	if selected then
 		if selected.ring then selected.ring.holder:Destroy() end
+		destroyArea(selected.area)
 		selected.arrow:Destroy()
 		selected = nil
 	end
@@ -711,10 +922,25 @@ function WorldView.update(dt)
 			if selected.level ~= vis.level then
 				selected.level = vis.level
 				if selected.ring then selected.ring.holder:Destroy() end
+				destroyArea(selected.area)
 				local stats = Config.ScaledStats(vis.unit, vis.level, vis.model:GetAttribute("UnitLevel"))
 				selected.ring = makeRing(stats and stats.Range or 10, WHITE)
+				selected.area = makeArea(Config.AttackOf(vis.unit, vis.level), stats and stats.Range or 10, WHITE)
 			end
 			placeRing(selected.ring, p.X, p.Z)
+			if selected.area then
+				-- aim at the enemy it shot last (if recent), otherwise the way it faces
+				local ax, az
+				local t = vis.lastTarget
+				if t and now - (vis.lastShotAt or 0) < 1.5 and t.part and t.part.Parent then
+					ax, az = aimWithin(p.X, p.Z, t.x, t.z, selected.area.range)
+				else
+					local look = vis.root.CFrame.LookVector
+					local reach = selected.area.range * 0.7
+					ax, az = p.X + look.X * reach, p.Z + look.Z * reach
+				end
+				placeArea(selected.area, p.X, p.Z, ax, az)
+			end
 			local ax, az = math.floor(p.X / PXS + 0.5), math.floor(p.Z / PXS + 0.5)
 			local bob = (math.sin(now * 6) > 0) and 0 or 1
 			selected.arrow.Position = UDim2.fromOffset(ax - 3, az - vis.h - 6 + bob)
@@ -731,6 +957,18 @@ function WorldView.update(dt)
 		if age >= e.life then
 			e.frame:Destroy()
 			table.remove(effects, i)
+		elseif e.kind == "fx" then
+			local a = age - e.delay
+			if a >= 0 then
+				local t = a / (e.life - e.delay)
+				e.frame.Visible = true
+				e.frame.BackgroundTransparency = e.base + (1 - e.base) * t
+				if e.stroke then e.stroke.Transparency = t end
+				if e.grow then
+					local size = e.grow.From:Lerp(e.grow.To, math.min(1, t * 1.6))
+					e.frame.Size = UDim2.fromOffset(size.X, size.Y)
+				end
+			end
 		elseif e.kind == "part" then
 			e.vz += 60 * dt
 			e.x += e.vx * dt
@@ -787,15 +1025,21 @@ function WorldView.start(parent, opts)
 
 		local remotes = ReplicatedStorage:WaitForChild("Remotes")
 		local shot = remotes:WaitForChild("Shot")
-		track(shot.OnClientEvent:Connect(function(model, enemyPart, targetPos)
+		track(shot.OnClientEvent:Connect(function(model, enemyPart, targetPos, shape)
 			local vis = towers[model]
 			if not vis or not vis.root then return end
 			vis.recoilAt = os.clock()
 			-- only shoot at enemies that are drawn on screen; the bolt follows the drawn sprite
 			local target = typeof(enemyPart) == "Instance" and enemies[enemyPart] or nil
 			if not target then return end
+			vis.lastTarget, vis.lastShotAt = target, os.clock() -- the area indicator follows it
 			local p = vis.root.Position
 			local color = Config.Units[vis.unit].BeamColor
+			-- area attacks (#40): their shape; Line / Cone / Circle replace the bolt
+			if typeof(shape) == "table" then
+				attackFx(p.X, p.Z, target.x, target.z, shape, color)
+				if shape.K ~= "Splash" then return end
+			end
 			spawnShot(p.X, p.Z - 4.5, target.x, target.z - 2.5, color, target, Config.ShotTravel)
 		end))
 		track(RunService.RenderStepped:Connect(function(dt)

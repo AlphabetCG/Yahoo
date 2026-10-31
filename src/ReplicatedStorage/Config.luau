@@ -151,6 +151,13 @@ Config.Bounds = { MinX = -78, MaxX = 78, MinZ = -42, MaxZ = 42 }
 --     { Kind = "Burn", Dps = n, Duration = s }  damage over time (money is paid for burn damage too)
 --     { Kind = "Slow", Pct = 0.3, Duration = s } walks Pct slower (the line behind it slows down too)
 -- PlaceLimit = optional: overrides Config.DefaultPlaceLimit for this unit (copies on the map per player).
+-- Attack = optional attack shape, on the unit or on an upgrade level (a level keeps the shape of the
+--   closest level below it that sets one). Without it the unit hits one enemy ("Single").
+--     { Kind = "Splash", Radius = 6, SplashPct = 0.5 }  the target + everyone within Radius studs of it (SplashPct damage)
+--     { Kind = "Line", Width = 4, MaxHits = 6 }          a beam to the end of the range through the target
+--     { Kind = "Cone", Angle = 70, MaxHits = 4 }         everyone in range inside a cone towards the target
+--     { Kind = "Circle", MaxHits = 5 }                    everyone in range around the unit (Radius = optional)
+--   The target always takes full damage; MaxHits caps the enemies hit (the ones closest to the castle first).
 -- Image = optional: draw the unit from an uploaded image (sprite sheet) instead of its PixelArt grid.
 --   Image = {
 --     Id = "rbxassetid://123456789",   -- the IMAGE asset id ("" = keep using the PixelArt grid)
@@ -186,8 +193,8 @@ Config.Units = {
 			{ Cost = 500, Name = "Swift Kunai", Damage = 1, Range = 28, Cooldown = 0.16 },
 			{ Cost = 1000, Name = "Clone Rush", Damage = 2, Range = 30, Cooldown = 0.18 },
 			{ Cost = 2000, Name = "Spiral Strike", Damage = 3, Range = 32, Cooldown = 0.15 },
-			{ Cost = 3800, Name = "Fox Fury", Damage = 4, Range = 34, Cooldown = 0.1,
-				Ability = { Kind = "Burn", Dps = 2, Duration = 2 } },
+			{ Cost = 3800, Name = "Fox Fury", Damage = 3, Range = 34, Cooldown = 0.2,
+				Ability = { Kind = "Burn", Dps = 2, Duration = 2 }, Attack = { Kind = "Circle", MaxHits = 5 } },
 		},
 	},
 	-- Epic, long reach: stretchy punches from far away; last refines briefly slow enemies
@@ -200,7 +207,7 @@ Config.Units = {
 			{ Cost = 500, Name = "Stretch Punch", Damage = 3, Range = 46, Cooldown = 0.55 },
 			{ Cost = 1000, Name = "Rapid Fists", Damage = 4, Range = 48, Cooldown = 0.4 },
 			{ Cost = 2000, Name = "Giant Fist", Damage = 7, Range = 50, Cooldown = 0.35,
-				Ability = { Kind = "Slow", Pct = 0.15, Duration = 0.6 } },
+				Ability = { Kind = "Slow", Pct = 0.15, Duration = 0.6 }, Attack = { Kind = "Splash", Radius = 6, SplashPct = 0.5 } },
 			{ Cost = 3800, Name = "Rubber King", Damage = 10, Range = 54, Cooldown = 0.25,
 				Ability = { Kind = "Slow", Pct = 0.25, Duration = 1 } },
 		},
@@ -211,11 +218,12 @@ Config.Units = {
 		Cost = 600,
 		BeamColor = Color3.fromRGB(220, 60, 60),
 		Levels = {
-			{ Damage = 6, Range = 24, Cooldown = 1.0 },
+			{ Damage = 6, Range = 24, Cooldown = 1.0, Attack = { Kind = "Cone", Angle = 60, MaxHits = 3 } },
 			{ Cost = 500, Name = "Heavy Slash", Damage = 7, Range = 26, Cooldown = 0.9 },
 			{ Cost = 1000, Name = "Crescent Fang", Damage = 10, Range = 30, Cooldown = 0.8 },
 			{ Cost = 2000, Name = "Dark Mask", Damage = 16, Range = 32, Cooldown = 0.6 },
-			{ Cost = 3800, Name = "Final Release", Damage = 26, Range = 36, Cooldown = 0.6 },
+			{ Cost = 3800, Name = "Final Release", Damage = 26, Range = 36, Cooldown = 0.6,
+				Attack = { Kind = "Cone", Angle = 80, MaxHits = 5 } },
 		},
 	},
 	-- Legendary test unit: strong from the start, about 2.5x Herobrine's damage per second at every level
@@ -228,9 +236,9 @@ Config.Units = {
 			{ Cost = 700, Name = "Focused Sight", Damage = 5, Range = 42, Cooldown = 0.45 },
 			{ Cost = 1400, Name = "Void Pulse", Damage = 7, Range = 46, Cooldown = 0.38 },
 			{ Cost = 2800, Name = "Violet Burst", Damage = 10, Range = 50, Cooldown = 0.3,
-				Ability = { Kind = "Slow", Pct = 0.2, Duration = 1 } },
+				Ability = { Kind = "Slow", Pct = 0.2, Duration = 1 }, Attack = { Kind = "Line", Width = 4, MaxHits = 4 } },
 			{ Cost = 5000, Name = "Boundless Void", Damage = 15, Range = 56, Cooldown = 0.2,
-				Ability = { Kind = "Slow", Pct = 0.35, Duration = 1.5 } },
+				Ability = { Kind = "Slow", Pct = 0.35, Duration = 1.5 }, Attack = { Kind = "Line", Width = 5, MaxHits = 6 } },
 		},
 	},
 }
@@ -290,6 +298,32 @@ function Config.ScaledStats(unitName, refineLevel, unitLevel)
 	stats.Damage = base.Damage * (1 + L.DamagePerLevel * above)
 	stats.Range = base.Range + math.min(L.RangePerLevel * above, L.MaxRangeBonus)
 	return stats
+end
+
+-- Attack shape of a unit at an upgrade level (see Attack in Config.Units). Always returns a table.
+local SINGLE = { Kind = "Single" }
+function Config.AttackOf(unitName, refineLevel)
+	local unit = Config.Units[unitName]
+	if not unit then return SINGLE end
+	for level = math.min(refineLevel or 1, #unit.Levels), 1, -1 do
+		if unit.Levels[level].Attack then return unit.Levels[level].Attack end
+	end
+	return unit.Attack or SINGLE
+end
+
+-- Short text for an attack shape, e.g. "SPLASH 6 (50%)", "LINE x6", "CONE 70 x4", "CIRCLE x5"
+function Config.DescribeAttack(attack)
+	local kind = attack and attack.Kind or "Single"
+	if kind == "Splash" then
+		return ("SPLASH %s (%d%%)"):format(tostring(attack.Radius or 6), math.floor((attack.SplashPct or 0.5) * 100 + 0.5))
+	elseif kind == "Line" then
+		return ("LINE x%d"):format(attack.MaxHits or 99)
+	elseif kind == "Cone" then
+		return ("CONE %d x%d"):format(attack.Angle or 60, attack.MaxHits or 99)
+	elseif kind == "Circle" then
+		return ("CIRCLE x%d"):format(attack.MaxHits or 99)
+	end
+	return "SINGLE"
 end
 
 -- Short text for an ability, e.g. "BURN 2/S FOR 2.5S" (nil when there is none)

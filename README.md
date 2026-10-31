@@ -164,6 +164,7 @@ Nearly everything is in [Config.luau](src/ReplicatedStorage/Config.luau):
   4. Set `Size` (on-screen size in art pixels, around 14–20 × 18–24 to match the other units) and `FrameSize` (the size of one frame in the file, ideally an exact multiple of `Size`).
 - **New material:** add it to `Config.Materials` and `Config.MaterialOrder`. Grant it with `PlayerData.AddMaterial(player, key, n)`.
 - **Waves and economy:** `EnemiesBase`, `EnemiesPerRound`, `HpPerRound`, `WaveClearTime`, `EnemySpacing`, `RewardPerPop`, `RoundBonus`, `StartMoney`, `DefaultPlaceLimit`, and `Tiers[*].Speed` / `HP`.
+- **Attack shapes:** add `Attack = { Kind = "Splash" | "Line" | "Cone" | "Circle", ... }` to a unit or an upgrade level (later levels keep it). The target always takes full damage; the shape adds everyone else inside it (closest to the castle first, up to `MaxHits`). Now: Ichitoe Cone, Fluffy Splash (Lv4+), Voidseer Line (Lv4+), Zaruto Circle (Lv5).
 - **Upgrade abilities:** add `Ability = { Kind = "Burn", Dps, Duration }` or `{ Kind = "Slow", Pct, Duration }` to a `Levels[i]` entry.
 - **Banners:** add an entry to `Config.Banners` / `Config.BannerOrder` (rates, cost, featured unit, pity, start/end time). `Limited = true` on a unit keeps it out of every banner that doesn't feature it. Studio: `Config.DebugSummonSim = true` prints a 10,000-pull check of every banner.
 - **Unit leveling:** `Config.Leveling` (XP per stage, XP per Essence, damage / range per level), `Config.XpToNext(level)`, level caps in `Config.Rarities[*].MaxLevel`.
