@@ -1312,6 +1312,14 @@ if IS_MATCH_PLACE then
 	end)
 end
 
+-- Studio check of the summon banners (Config.DebugSummonSim): real numbers vs the config
+if RunService:IsStudio() and Config.DebugSummonSim then
+	task.spawn(function()
+		local Banners = require(script.Parent:WaitForChild("Banners"))
+		for _, bannerId in ipairs(Config.BannerOrder) do Banners.simulate(bannerId, 10000) end
+	end)
+end
+
 -- ===== Main loop =====
 RunService.Heartbeat:Connect(function(dt)
 	if workspace:GetAttribute("State") ~= "Playing" then return end

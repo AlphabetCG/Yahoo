@@ -459,6 +459,7 @@ TweenService:Create(titleBox, TweenInfo.new(1.6, Enum.EasingStyle.Sine, Enum.Eas
 local playButton = pixelButton(menu, "PLAY", UDim2.fromOffset(340, 84), UDim2.fromScale(0.5, 0.46), 44, GREEN_BTN, GREEN_EDGE, WHITE)
 
 local inventoryButton = pixelButton(menu, "INVENTORY", UDim2.fromOffset(340, 64), UDim2.new(0.5, 0, 0.46, 150), 30)
+local summonMenuButton = pixelButton(menu, "SUMMON", UDim2.fromOffset(340, 64), UDim2.new(0.5, 0, 0.46, 230), 30)
 
 -- currencies, top-right of the main menu (filled in by applyProfile)
 local menuCurrency = label(menu, {
@@ -1353,6 +1354,8 @@ end
 -- =====================================================================
 -- Built inside its own function: Luau allows only 200 locals per function, and the main
 -- chunk of this script is close to that limit.
+local bannerMenu -- the SUMMON screen; created after the inventory (see below)
+
 local function buildInventory()
 
 	local INV_W, INV_H = 780, 620
@@ -1425,7 +1428,7 @@ local function buildInventory()
 		invMessage.TextColor3 = color or TEXT_DIM
 	end
 
-	local summonButton = pixelButton(inventoryPanel, "SUMMON - " .. Config.Summon.Cost .. " GEMS", UDim2.fromOffset(300, 52), UDim2.new(0.5, -110, 0, 584), 22, GREEN_BTN, GREEN_EDGE, WHITE)
+	local summonButton = pixelButton(inventoryPanel, "SUMMON", UDim2.fromOffset(300, 52), UDim2.new(0.5, -110, 0, 584), 22, GREEN_BTN, GREEN_EDGE, WHITE)
 	local inventoryClose = pixelButton(inventoryPanel, "CLOSE", UDim2.fromOffset(180, 52), UDim2.new(0.5, 190, 0, 584), 24, RED_BTN, RED_EDGE, WHITE)
 
 	local function clearGui(container)
@@ -1784,8 +1787,6 @@ local function buildInventory()
 		setButtonColor(materialsTab, inventoryTab == "Materials" and GREEN_BTN or BTN)
 		gemsLabel.Text = "GEMS: " .. fmt(profile and profile.Gems or 0)
 		goldLabel.Text = "GOLD: " .. fmt(profile and profile.Gold or 0)
-		local canSummon = profile ~= nil and profile.Gems >= Config.Summon.Cost
-		setButtonColor(summonButton, canSummon and GREEN_BTN or GREY_BTN)
 		if selectedInvUid and not (profile and profile.Units[selectedInvUid]) then
 			selectedInvUid, pickingSlotFor = nil, nil -- sold
 		end
@@ -1901,18 +1902,10 @@ local function buildInventory()
 	unitsTab.MouseButton1Click:Connect(function() inventoryTab = "Units"; refreshInventory() end)
 	materialsTab.MouseButton1Click:Connect(function() inventoryTab = "Materials"; refreshInventory() end)
 
-	local summoning = false
+	-- SUMMON opens the banner screen (BannerMenu)
 	summonButton.MouseButton1Click:Connect(function()
-		if summoning then return end
-		summoning = true
-		local ok, result = Remote.Summon:InvokeServer()
-		summoning = false
-		if ok and typeof(result) == "table" then
-			selectedInvUid = result.UnitId
-			invNotify(("Summoned %s %s!  %s"):format(string.upper(result.Rarity or ""), string.upper(result.Unit), result.New and "NEW UNIT" or "ADDED AS A NEW CARD"), Config.RarityOf(result.Unit).Color)
-		else
-			invNotify(tostring(result or "Summon failed"), RED)
-		end
+		closeInventory()
+		bannerMenu.open()
 	end)
 
 	return inventoryDim, refreshInventory, closeInventory
@@ -1920,9 +1913,9 @@ end
 local inventoryDim, refreshInventory, closeInventory = buildInventory()
 
 -- PLAY: mode > map > stage > lobby (PlayMenu module next to this script)
-waitingFor = "the PlayMenu module"
-local playMenu = require(script.Parent:WaitForChild("PlayMenu")).init({
-	Config = Config, Remote = Remote, player = player, popupGui = popupGui,
+-- UI helpers shared with the menu modules next to this script (BannerMenu, PlayMenu)
+local uiKit = {
+	Config = Config, Remote = Remote, player = player, popupGui = popupGui, PixelArt = PixelArt,
 	make = make, label = label, pixelButton = pixelButton, pixelPanel = pixelPanel,
 	setButtonColor = setButtonColor, fmt = fmt,
 	colors = {
@@ -1930,7 +1923,15 @@ local playMenu = require(script.Parent:WaitForChild("PlayMenu")).init({
 		WHITE = WHITE, BLACK = BLACK, TEXT_DIM = TEXT_DIM, BTN = BTN, GREY_BTN = GREY_BTN,
 		GREEN_BTN = GREEN_BTN, GREEN_EDGE = GREEN_EDGE, RED_BTN = RED_BTN, RED_EDGE = RED_EDGE, rgb = rgb,
 	},
-})
+}
+waitingFor = "the BannerMenu module"
+bannerMenu = require(script.Parent:WaitForChild("BannerMenu")).init(uiKit)
+summonMenuButton.MouseButton1Click:Connect(function()
+	bannerMenu.open()
+end)
+
+waitingFor = "the PlayMenu module"
+local playMenu = require(script.Parent:WaitForChild("PlayMenu")).init(uiKit)
 
 waitingFor = "loading the UI"
 
@@ -1944,6 +1945,7 @@ local function applyProfile(p)
 	end
 	menuCurrency.Text = ('<font color="#78DCFF">GEMS %s</font>   <font color="#FFC43C">GOLD %s</font>'):format(fmt(p.Gems or 0), fmt(p.Gold or 0))
 	playMenu.setProfile(p)
+	bannerMenu.setProfile(p)
 	rebuildShop()
 	if inventoryDim.Visible then refreshInventory() end
 end
@@ -1981,6 +1983,7 @@ local function refreshState()
 	hudGui.Enabled = state ~= "Menu"
 	if state ~= "Menu" then closeInventory() end
 	playMenu.onState(state)
+	if state ~= "Menu" then bannerMenu.close() end
 	if state == "Playing" then lastRewards = nil end
 	showResult(state)
 	if state ~= "Playing" then

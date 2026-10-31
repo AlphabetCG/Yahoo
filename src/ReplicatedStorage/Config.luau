@@ -372,12 +372,92 @@ Config.Rewards = {
 	BossCrystals = 1,       -- Void Crystals when the boss is defeated
 }
 
--- Summon: spend Gems to get a random unit. Pool = { UnitName = weight }; every unit in the pool
--- must exist in Config.Units. New units show up in the summon as soon as you add them here.
-Config.Summon = {
-	Cost = 100,
-	Pool = { Herobrine = 71, Zaruto = 8, Fluffy = 8, Ichitoe = 8, Voidseer = 5 }, -- Rare 71% / Epic 24% / Legendary 5%
+-- ===== Summon banners =====
+-- A pull first rolls a RARITY (Rates, in %), then a unit of that rarity:
+--   * the pool of a rarity = every unit with that Rarity, except Limited units (Limited = true in
+--     Config.Units), which only drop from a banner that features them
+--   * Featured = { Rarity = "UnitName" }: when that rarity is rolled, the featured unit is picked RateUp
+--     of the time (0.5 = 50%); otherwise a random unit of that rarity
+--   * a rarity without any unit in its pool (no Mythic units yet) is skipped and its share is spread
+--     over the other rarities
+-- Pity = { Rarity = N }: the Nth pull in a row without that rarity (or a better one) is guaranteed to
+-- give it. Counters are per banner and per player and reset when that rarity (or better) drops.
+-- StartsAt / EndsAt: unix time (UTC). Leave them out for a banner that is always on.
+Config.BannerOrder = { "Launch", "Standard" }
+Config.Banners = {
+	Standard = {
+		Name = "Standard Summon",
+		Color = Color3.fromRGB(90, 170, 255),
+		Cost = 100, Cost10 = 900,
+		Rates = { Rare = 71, Epic = 24, Legendary = 5 },
+		Pity = { Legendary = 60 },
+	},
+	Launch = {
+		Name = "Void Awakening",
+		Color = Color3.fromRGB(150, 100, 255),
+		StartsAt = 1793491200, EndsAt = 1796083200, -- 1 Nov 2026 - 1 Dec 2026 (UTC)
+		Cost = 100, Cost10 = 900,
+		Rates = { Rare = 65, Epic = 28, Legendary = 6.5, Mythic = 0.5 },
+		Featured = { Legendary = "Voidseer" },
+		RateUp = 0.5,
+		Pity = { Legendary = 50, Mythic = 300 },
+	},
 }
+Config.DefaultBanner = "Standard"
+Config.DebugSummonSim = false -- Studio: print a 10,000-pull simulation of every banner when the server starts
+
+-- Is the banner open at unix time `now`?
+function Config.BannerActive(bannerId, now)
+	local banner = Config.Banners[bannerId]
+	if not banner then return false end
+	return (not banner.StartsAt or now >= banner.StartsAt) and (not banner.EndsAt or now < banner.EndsAt)
+end
+
+-- Units that can drop for `rarity` on this banner (sorted by name)
+function Config.BannerPool(bannerId, rarity)
+	local banner = Config.Banners[bannerId]
+	local featured = banner and banner.Featured or {}
+	local list = {}
+	for name, unit in pairs(Config.Units) do
+		if unit.Rarity == rarity and (not unit.Limited or featured[rarity] == name) then
+			table.insert(list, name)
+		end
+	end
+	table.sort(list)
+	return list
+end
+
+-- The banner's real chances, rarest first: { { Rarity, Chance (0-1), Units = { { Name, Chance } } } }.
+-- Rarities with an empty pool are left out and the rest scaled up to 100%.
+function Config.BannerRates(bannerId)
+	local banner = Config.Banners[bannerId]
+	if not banner then return {} end
+	local rows, total = {}, 0
+	for rarity, percent in pairs(banner.Rates) do
+		local pool = Config.BannerPool(bannerId, rarity)
+		if #pool > 0 and percent > 0 then
+			table.insert(rows, { Rarity = rarity, Weight = percent, Pool = pool })
+			total += percent
+		end
+	end
+	table.sort(rows, function(a, b) return Config.Rarities[a.Rarity].Order > Config.Rarities[b.Rarity].Order end)
+	for _, row in ipairs(rows) do
+		row.Chance = row.Weight / total
+		row.Units = {}
+		local featured = banner.Featured and banner.Featured[row.Rarity]
+		for _, name in ipairs(row.Pool) do
+			local share
+			if featured and #row.Pool > 1 then
+				local rateUp = banner.RateUp or 0.5
+				share = name == featured and rateUp or (1 - rateUp) / (#row.Pool - 1)
+			else
+				share = 1 / #row.Pool
+			end
+			table.insert(row.Units, { Name = name, Chance = row.Chance * share })
+		end
+	end
+	return rows
+end
 
 -- ===== Path helpers =====
 -- The path comes from the parts named "1", "2", "3"... inside Workspace.Waypoints.
