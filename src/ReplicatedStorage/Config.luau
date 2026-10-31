@@ -30,6 +30,20 @@ Config.SpeedOptions = { 1, 2, 3 } -- game speed choices (x1, x2, x3)
 Config.SellRefund = 0.5        -- selling a unit returns this share of everything spent on it
 Config.TargetModes = { "First", "Last", "Strongest", "Weakest", "Closest", "None" }
 
+-- ===== Multiplayer (one server = one match) =====
+Config.MaxPartySize = 4        -- players who can play a stage together; anyone else in the server spectates
+-- Money is shared: every pop and round bonus pays EVERY player in the match this share of the solo amount
+-- (index = number of players), so nobody steals kills. 2 players: 2 x 0.65 = 1.3x the solo income in total.
+Config.TeamIncome = { 1.0, 0.65, 0.5, 0.42 }
+Config.HpPerExtraPlayer = 0.35 -- enemies get +35% health for every player after the first
+-- every player gets one of these colours: their units are outlined in it and it shows in the party panel
+Config.PlayerColors = {
+	Color3.fromRGB(70, 200, 255),  -- cyan
+	Color3.fromRGB(255, 90, 200),  -- pink
+	Color3.fromRGB(140, 240, 80),  -- lime
+	Color3.fromRGB(255, 160, 50),  -- orange
+}
+
 -- ===== Map =====
 Config.GroundY = 0
 Config.PathTop = 0.4
