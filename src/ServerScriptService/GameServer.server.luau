@@ -1111,7 +1111,7 @@ local teleportRetries = {} -- [player] = { Options = TeleportOptions, Tries = n 
 
 local function teleportRoom(room)
 	if RunService:IsStudio() then
-		return false, "Teleports only work in the published game. To test a stage in Studio, open the 2nd place."
+		return false, "Teleports only work in the published game. To test a stage in Studio, open the Match place."
 	end
 	local members = table.clone(room.Members)
 	local userIds = {}

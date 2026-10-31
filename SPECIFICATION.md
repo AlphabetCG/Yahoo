@@ -1,4 +1,4 @@
-# YAHOO — Feature Specification & Roadmap
+# Bitfenders — Feature Specification & Roadmap
 
 This document lists what to build next. Each feature is mapped to the current code. Each entry gives:
 - **Now:** what the code does today.

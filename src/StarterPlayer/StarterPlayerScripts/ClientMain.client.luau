@@ -440,14 +440,14 @@ local titleBox = make("Frame", {
 label(titleBox, {
 	Position = UDim2.fromOffset(5, 6),
 	Size = UDim2.fromScale(1, 1),
-	Text = "ANIME TOWER DEFENSE",
+	Text = "BITFENDERS",
 	TextScaled = true,
 	TextColor3 = PANEL_EDGE,
 	TextStrokeTransparency = 1,
 })
 label(titleBox, {
 	Size = UDim2.fromScale(1, 1),
-	Text = "ANIME TOWER DEFENSE",
+	Text = "BITFENDERS",
 	TextScaled = true,
 	TextColor3 = GOLD,
 	ZIndex = 2,
