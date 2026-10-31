@@ -1,4 +1,4 @@
-# YAHOO — Anime Tower Defense (Roblox)
+# Bitfenders (Roblox)
 
 A pixel-art tower defense game for Roblox. Players place **units** beside a path. Waves of **wisps** walk toward the castle, and the stage ends with a boss, the **Wisp King**. Between stages, players spend **Gems** to summon units and collect **materials** for future upgrade systems.
 
@@ -138,16 +138,16 @@ The experience has two places. The scripts are shared; `Config.PlaceRole()` chec
 
 | Place | Rojo project | What it has |
 |---|---|---|
-| **Lobby**: *Yahoo* (start place) | `default.project.json` | Menus only: main menu, inventory, summon, PLAY flow and lobby rooms. **No map.** START always teleports the room to its own reserved Match server |
-| **Match**: *Match* place under Yahoo (`Config.Places.Match` = 114181242148498) | `match.project.json` (adds `src/Map/Waypoints`) | The map and the stages. Waits for the room's players (max 20 s), plays the stage from the TeleportData; **BACK TO LOBBY** sends each player back. Only the room's members can be there: joining the place directly, following a friend in, or arriving with another room's key gets you kicked (Studio is exempt) |
+| **Lobby** (start place) | `default.project.json` | Menus only: main menu, inventory, summon, PLAY flow and lobby rooms. **No map.** START always teleports the room to its own reserved Match server |
+| **Match** (a place in the same experience, `Config.Places.Match` = 114181242148498) | `match.project.json` (adds `src/Map/Waypoints`) | The map and the stages. Waits for the room's players (max 20 s), plays the stage from the TeleportData; **BACK TO LOBBY** sends each player back. Only the room's members can be there: joining the place directly, following a friend in, or arriving with another room's key gets you kicked (Studio is exempt) |
 
 **Syncing and publishing:**
-1. **Yahoo:** `rojo serve` (default project), connect from Yahoo in Studio, then **Publish**. Rojo removes the map from Yahoo, since it is no longer in this project.
-2. **2nd place:** `rojo serve match.project.json --port 34873`, open the 2nd place, connect the Rojo plugin to port **34873**, then **Publish**.
+1. **Lobby:** `rojo serve` (default project; the plugin shows **Bitfenders**), connect from the Lobby place in Studio, then **Publish**.
+2. **Match:** `rojo serve match.project.json` (stop the lobby server first, or add `--port 34873`), open the Match place, connect (the plugin shows **BitfendersMatch**), then **Publish**.
 3. Both servers can run at the same time on their own ports.
 
 **Testing:**
-- **Stages in Studio:** open the **2nd place** and press Play. It starts Story Stage 1 by itself. When it ends, BACK TO LOBBY (host) restarts it.
+- **Stages in Studio:** open the **Match place** and press Play. It starts Story Stage 1 by itself. When it ends, BACK TO LOBBY (host) restarts it.
 - **The lobby in Studio:** menus, inventory and lobby rooms work. START says teleports only work in the published game.
 - **Teleports:** test in the live game or a private server.
 - **One place for everything** (development only): set `Config.Places.Match = 0` and sync `match.project.json`.
@@ -167,7 +167,7 @@ Nearly everything is in [Config.luau](src/ReplicatedStorage/Config.luau):
 - **Upgrade abilities:** add `Ability = { Kind = "Burn", Dps, Duration }` or `{ Kind = "Slow", Pct, Duration }` to a `Levels[i]` entry.
 - **Banners:** add an entry to `Config.Banners` / `Config.BannerOrder` (rates, cost, featured unit, pity, start/end time). `Limited = true` on a unit keeps it out of every banner that doesn't feature it. Studio: `Config.DebugSummonSim = true` prints a 10,000-pull check of every banner.
 - **Unit leveling:** `Config.Leveling` (XP per stage, XP per Essence, damage / range per level), `Config.XpToNext(level)`, level caps in `Config.Rarities[*].MaxLevel`.
-- **Path:** move or add the `Workspace.Waypoints` parts in the 2nd place (`src/Map/Waypoints`), which are numbered in order.
+- **Path:** move or add the `Workspace.Waypoints` parts in the Match place (`src/Map/Waypoints`), which are numbered in order.
 
 ---
 
@@ -175,6 +175,6 @@ Nearly everything is in [Config.luau](src/ReplicatedStorage/Config.luau):
 
 These are all covered in the spec:
 
-- **Teleports only work in the published game.** In Studio, test stages by opening the 2nd place.
+- **Teleports only work in the published game.** In Studio, test stages by opening the Match place.
 - **Little content.** There are five units, one enemy type plus the boss, and one map.
 - **x3 speed is free.** It is planned as a gamepass perk.

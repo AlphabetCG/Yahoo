@@ -46,9 +46,9 @@ Config.PlayerColors = {
 
 -- ===== Places =====
 -- The same scripts run in both places of the experience; they check game.PlaceId to know which one this is.
---   Lobby = the start place (Yahoo): menus, inventory, summon, lobby rooms. No map: START always
+--   Lobby = the start place: menus, inventory, summon, lobby rooms. No map: START always
 --           teleports the room to the Match place. (Synced with default.project.json.)
---   Match = the 2nd place: the map and the stages. (Synced with match.project.json.)
+--   Match = the Match place: the map and the stages. (Synced with match.project.json.)
 -- Set Match to 0 to keep everything in one place (needs the map in that place: use match.project.json).
 Config.Places = {
 	Match = 114181242148498,
