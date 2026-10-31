@@ -986,6 +986,18 @@ local function rebuildShop()
 				TextSize = 16,
 				ZIndex = 3,
 			})
+			if unit.CanHitAir then
+				-- can hit Flying enemies (Config.EnemyTypes)
+				label(card, {
+					AnchorPoint = Vector2.new(1, 0),
+					Position = UDim2.new(1, -8, 0, 8),
+					Size = UDim2.fromOffset(40, 18),
+					Text = "AIR",
+					TextSize = 14,
+					TextColor3 = rgb(110, 200, 255),
+					ZIndex = 3,
+				})
+			end
 			label(card, {
 				Position = UDim2.fromOffset(0, 94),
 				Size = UDim2.new(1, 0, 0, 26),

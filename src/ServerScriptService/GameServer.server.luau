@@ -412,11 +412,14 @@ local function enemyRadius(isBoss)
 	return Config.EnemySpacing / 2 * (isBoss and Config.Boss.Scale or 1)
 end
 
--- round = the round this enemy belongs to (sets its health); bossHealth = multiplier for a boss
-local function spawnEnemy(tier, isBoss, round, bossHealth)
+-- round = the round this enemy belongs to (sets its health); bossHealth = multiplier for a boss;
+-- typeName = a key of Config.EnemyTypes (Wisp, Runner, Tank, Shielded, Flying)
+local function spawnEnemy(tier, isBoss, round, bossHealth, typeName)
 	if #path < 2 then return end
+	typeName = (not isBoss and Config.EnemyTypes[typeName or ""]) and typeName or "Wisp"
+	local def = Config.EnemyTypes[typeName]
 	local health = isBoss and Config.Boss.Health * (bossHealth or 1)
-		or tierInfo(tier).HP * (1 + Config.HpPerRound * math.max(0, (round or 1) - 1))
+		or tierInfo(tier).HP * (1 + Config.HpPerRound * math.max(0, (round or 1) - 1)) * (def.Health or 1)
 	health *= stageHealthMult -- difficulty and stage rules
 	health *= 1 + Config.HpPerExtraPlayer * (partySize() - 1) -- tougher with more players
 	local part = Instance.new("Part")
@@ -430,6 +433,13 @@ local function spawnEnemy(tier, isBoss, round, bossHealth)
 	part:SetAttribute("Born", workspace:GetServerTimeNow())
 	part:SetAttribute("MaxHealth", health)
 	part:SetAttribute("Health", health)
+	part:SetAttribute("Type", typeName)
+	local shield = (not isBoss and def.Shield) and health * def.Shield or 0
+	if shield > 0 then
+		part:SetAttribute("MaxShield", shield)
+		part:SetAttribute("Shield", shield)
+	end
+	if def.Flying then part:SetAttribute("Flying", true) end
 	if isBoss then
 		part.Name = "Boss"
 		part:SetAttribute("Boss", true)
@@ -446,10 +456,14 @@ local function spawnEnemy(tier, isBoss, round, bossHealth)
 		MaxHealth = health,
 		Carry = 0,                -- damage dealt that has not been paid out as a whole HP yet
 		Boss = isBoss or false,
-		Speed = (isBoss and Config.Boss.Speed or tierInfo(tier).Speed) * stageSpeedMult,
+		Speed = (isBoss and Config.Boss.Speed or tierInfo(tier).Speed * (def.Speed or 1)) * stageSpeedMult,
+		Type = typeName,
+		Shield = shield,          -- must be broken before health goes down
+		Flying = def.Flying == true,
+		Lives = def.Lives or 1,   -- lives multiplier when it reaches the castle
 		Pending = 0,
 		Born = os.clock(),
-		Radius = enemyRadius(isBoss),
+		Radius = enemyRadius(isBoss) * (isBoss and 1 or (def.Size or 1)),
 		Index = 1,
 		Dist = 0,                 -- studs walked along the path (bigger = closer to the castle)
 		Dead = false,
@@ -460,6 +474,14 @@ end
 
 local function damageEnemy(enemy, damage, owner)
 	if enemy.Dead then return end
+	-- Shielded: the shield takes the damage first (and pays no money)
+	if (enemy.Shield or 0) > 0 then
+		local absorbed = math.min(damage, enemy.Shield)
+		enemy.Shield -= absorbed
+		damage -= absorbed
+		enemy.Part:SetAttribute("Shield", enemy.Shield)
+		if damage <= 1e-6 then return end
+	end
 	-- money is paid per whole HP removed; fractions carry over to the next hit
 	enemy.Carry += math.min(damage, enemy.Health)
 	enemy.Health -= damage
@@ -539,7 +561,8 @@ local function updateEnemies(dt)
 		local speed = e.Speed
 		if (e.SlowUntil or 0) > gameTime then speed *= 1 - e.SlowPct end
 		local step = speed * dt
-		if ahead then
+		-- single file for walkers; flyers go over the line (they neither wait nor block)
+		if ahead and not e.Flying then
 			step = math.min(step, math.max(0, ahead.Dist - (ahead.Radius + e.Radius) - e.Dist))
 		end
 		while step > 0 and e.Index < #path do
@@ -564,9 +587,9 @@ local function updateEnemies(dt)
 			if idx then table.remove(enemies, idx) end
 			e.Dead = true
 			e.Part:Destroy()
-			loseLives(e.Boss and math.ceil(e.Health - 1e-6) or e.ShownTier)
+			loseLives(e.Boss and math.ceil(e.Health - 1e-6) or e.ShownTier * (e.Lives or 1))
 			if workspace:GetAttribute("State") ~= "Playing" then return end
-		else
+		elseif not e.Flying then
 			ahead = e
 		end
 	end
@@ -613,7 +636,8 @@ local function updateTowers()
 			for _, e in ipairs(enemies) do
 				-- only enemies that clients have had time to draw, and that are not already
 				-- going to die from shots in flight, can be targeted
-				if not e.Dead and now - e.Born >= Config.SpawnGrace and e.Pending < e.Health then
+				if not e.Dead and now - e.Born >= Config.SpawnGrace and e.Pending < e.Health + (e.Shield or 0)
+					and (t.CanHitAir or not e.Flying) then
 					local ep = e.Part.Position
 					local d = (Vector2.new(ep.X, ep.Z) - o2).Magnitude
 					if d <= t.Stats.Range and isBetter(t.Mode, e, d, best, bestClose) then
@@ -635,6 +659,7 @@ local function updateTowers()
 					Enemy = best, Damage = t.Stats.Damage, Ability = t.Stats.Ability,
 					Owner = t.Owner, Due = now + Config.ShotTravel,
 					Attack = attack, Origin = o2, Aim = Vector2.new(targetPos.X, targetPos.Z), Range = t.Stats.Range,
+					CanHitAir = t.CanHitAir,
 				})
 				-- clients draw the shot; area attacks also get their shape
 				local shape = nil
@@ -700,7 +725,7 @@ local function victimsOf(h)
 
 	local extra = {}
 	for _, e in ipairs(enemies) do
-		if e ~= main and not e.Dead then
+		if e ~= main and not e.Dead and (h.CanHitAir or not e.Flying) then
 			local mult = inside(e)
 			if mult then table.insert(extra, { Enemy = e, Mult = mult }) end
 		end
@@ -771,6 +796,7 @@ local function createTower(player, unitName, pos, instance)
 		Stats = Config.ScaledStats(unitName, 1, unitLevel),
 		Attack = Config.AttackOf(unitName, 1), -- shape of the attack (Single / Splash / Line / Cone / Circle)
 		UnitLevel = unitLevel,
+		CanHitAir = unit.CanHitAir == true, -- can it hit Flying enemies
 		BeamColor = unit.BeamColor,
 		Last = -math.huge,
 		Mode = "First",
@@ -986,7 +1012,7 @@ local function startGame(stageId, members, host)
 				if session ~= mySession then return end
 				waitForRoom(false, mySession)
 				if session ~= mySession then return end
-				spawnEnemy(math.random(minTier, maxTier), false, r)
+				spawnEnemy(math.random(minTier, maxTier), false, r, nil, Config.EnemyTypeFor(r))
 				progress.Spawned += 1
 				publish()
 				if not gameWait(interval, mySession) then return end
