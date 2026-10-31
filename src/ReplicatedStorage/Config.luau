@@ -311,21 +311,6 @@ function Config.AttackOf(unitName, refineLevel)
 	return unit.Attack or SINGLE
 end
 
--- Short text for an attack shape, e.g. "SPLASH 6 (50%)", "LINE x6", "CONE 70 x4", "CIRCLE x5"
-function Config.DescribeAttack(attack)
-	local kind = attack and attack.Kind or "Single"
-	if kind == "Splash" then
-		return ("SPLASH %s (%d%%)"):format(tostring(attack.Radius or 6), math.floor((attack.SplashPct or 0.5) * 100 + 0.5))
-	elseif kind == "Line" then
-		return ("LINE x%d"):format(attack.MaxHits or 99)
-	elseif kind == "Cone" then
-		return ("CONE %d x%d"):format(attack.Angle or 60, attack.MaxHits or 99)
-	elseif kind == "Circle" then
-		return ("CIRCLE x%d"):format(attack.MaxHits or 99)
-	end
-	return "SINGLE"
-end
-
 -- Short text for an ability, e.g. "BURN 2/S FOR 2.5S" (nil when there is none)
 function Config.DescribeAbility(ability)
 	if not ability then return nil end
