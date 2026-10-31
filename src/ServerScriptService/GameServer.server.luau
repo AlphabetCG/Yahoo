@@ -8,11 +8,13 @@ local TeleportService = game:GetService("TeleportService")
 
 local Config = require(ReplicatedStorage:WaitForChild("Config"))
 
--- Which place is this? The same scripts run in the Lobby (start place) and the Match place.
---   Lobby: lobby rooms teleport to a reserved Match server (outside Studio, when Config.Places.Match is set).
+-- Which place is this? (Config.PlaceRole) The same scripts run in both places.
+--   Lobby: menus only, no map. START teleports the lobby room to its own reserved Match server.
 --   Match: plays the stage it was sent (TeleportData), then sends players back to the Lobby.
-local IS_MATCH_PLACE = Config.Places.Match ~= 0 and game.PlaceId == Config.Places.Match
-local USE_TELEPORT = Config.Places.Match ~= 0 and not IS_MATCH_PLACE and not RunService:IsStudio()
+--   Single (Config.Places.Match = 0): stages are played in this server.
+local PLACE_ROLE = Config.PlaceRole()
+local IS_MATCH_PLACE = PLACE_ROLE == "Match"
+local USE_TELEPORT = PLACE_ROLE == "Lobby"
 workspace:SetAttribute("IsMatchPlace", IS_MATCH_PLACE)
 
 -- No walking characters in a tower defense game
@@ -158,8 +160,8 @@ if workspace.StreamingEnabled then
 		.. "otherwise clients don't see the path, units or enemies.")
 end
 
-local path = Config.GetPath()
-if #path < 2 then
+local path = USE_TELEPORT and {} or Config.GetPath() -- the Lobby has no map
+if not USE_TELEPORT and #path < 2 then
 	warn("GameServer: Workspace.Waypoints needs at least 2 parts named 1, 2, 3... (is this place synced with Rojo?)")
 end
 
@@ -988,6 +990,9 @@ end
 local teleportRetries = {} -- [player] = { Options = TeleportOptions, Tries = n }
 
 local function teleportRoom(room)
+	if RunService:IsStudio() then
+		return false, "Teleports only work in the published game. To test a stage in Studio, open the 2nd place."
+	end
 	local members = table.clone(room.Members)
 	local userIds = {}
 	for _, p in ipairs(members) do table.insert(userIds, p.UserId) end

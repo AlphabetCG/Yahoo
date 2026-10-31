@@ -69,8 +69,9 @@ src/
   ServerStorage/
     Eclipse Animator Saves/   Plugin data (not game code)
   Workspace/
-    Waypoints/1..10           The enemy path. Move these parts in Studio to reshape it
     Towers/, Enemies/         Runtime folders filled by the server
+  Map/
+    Waypoints/1..10           The enemy path (Match place only, see match.project.json)
 ```
 
 ---
@@ -131,22 +132,23 @@ Other state lives on other objects:
 
 ## Two places: Lobby and Match
 
-The experience has two places, and **both run the same project** (`default.project.json`); the scripts check `game.PlaceId` to know where they are.
+The experience has two places. The scripts are shared; `Config.PlaceRole()` checks `game.PlaceId` to know where they run.
 
-| Place | PlaceId | What runs there |
+| Place | Rojo project | What it has |
 |---|---|---|
-| **Lobby** (start place) | the start place | Main menu, inventory, summon, PLAY flow and lobby rooms. START teleports the room to its own reserved Match server |
-| **Match** ("2nd place") | `Config.Places.Match` = 138398273175866 | No menu: waits for the room's players (max 20 s), plays the stage from the TeleportData, then **BACK TO LOBBY** sends each player back |
+| **Lobby**: *Yahoo* (start place) | `default.project.json` | Menus only: main menu, inventory, summon, PLAY flow and lobby rooms. **No map.** START always teleports the room to its own reserved Match server |
+| **Match**: *2nd place* (`Config.Places.Match` = 138398273175866) | `match.project.json` (adds `src/Map/Waypoints`) | The map and the stages. Waits for the room's players (max 20 s), plays the stage from the TeleportData; **BACK TO LOBBY** sends each player back |
 
-**Publishing a change:**
-1. Open the **Lobby** place in Studio, connect Rojo, then **File → Publish to Roblox**.
-2. Open the **Match** place (Asset Manager → Places → 2nd place), connect Rojo to the same project, then **Publish** again.
-3. Test teleports in the live game (or a private server): Studio can't teleport.
+**Syncing and publishing:**
+1. **Yahoo:** `rojo serve` (default project), connect from Yahoo in Studio, then **Publish**. Rojo removes the map from Yahoo, since it is no longer in this project.
+2. **2nd place:** `rojo serve match.project.json --port 34873`, open the 2nd place, connect the Rojo plugin to port **34873**, then **Publish**.
+3. Both servers can run at the same time on their own ports.
 
-**In Studio:**
-- **Lobby place:** a lobby room's START plays the stage in the same server, so the whole flow can be tested.
-- **Match place opened directly:** it starts Story Stage 1 with everyone who joined within 3 s.
-- **No teleports at all:** set `Config.Places.Match = 0` to play every stage inside the lobby server.
+**Testing:**
+- **Stages in Studio:** open the **2nd place** and press Play. It starts Story Stage 1 by itself. When it ends, BACK TO LOBBY (host) restarts it.
+- **The lobby in Studio:** menus, inventory and lobby rooms work. START says teleports only work in the published game.
+- **Teleports:** test in the live game or a private server.
+- **One place for everything** (development only): set `Config.Places.Match = 0` and sync `match.project.json`.
 
 ## Tweaking the game
 
@@ -162,7 +164,7 @@ Nearly everything is in [Config.luau](src/ReplicatedStorage/Config.luau):
 - **Waves and economy:** `EnemiesBase`, `EnemiesPerRound`, `HpPerRound`, `WaveClearTime`, `EnemySpacing`, `RewardPerPop`, `RoundBonus`, `StartMoney`, `DefaultPlaceLimit`, and `Tiers[*].Speed` / `HP`.
 - **Upgrade abilities:** add `Ability = { Kind = "Burn", Dps, Duration }` or `{ Kind = "Slow", Pct, Duration }` to a `Levels[i]` entry.
 - **Unit leveling:** `Config.Leveling` (XP per stage, XP per Essence, damage / range per level), `Config.XpToNext(level)`, level caps in `Config.Rarities[*].MaxLevel`.
-- **Path:** move or add the `Workspace.Waypoints` parts, which are numbered in order.
+- **Path:** move or add the `Workspace.Waypoints` parts in the 2nd place (`src/Map/Waypoints`), which are numbered in order.
 
 ---
 
@@ -170,6 +172,6 @@ Nearly everything is in [Config.luau](src/ReplicatedStorage/Config.luau):
 
 These are all covered in the spec:
 
-- **Teleports only work in the published game.** In Studio a lobby room plays its stage inside the same server.
+- **Teleports only work in the published game.** In Studio, test stages by opening the 2nd place.
 - **Little content.** There are five units, one enemy type plus the boss, and one map.
 - **x3 speed is free.** It is planned as a gamepass perk.

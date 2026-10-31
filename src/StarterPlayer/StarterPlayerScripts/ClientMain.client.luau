@@ -14,6 +14,8 @@ local playerGui = player:WaitForChild("PlayerGui")
 local Config = require(ReplicatedStorage:WaitForChild("Config"))
 local PixelArt = require(ReplicatedStorage:WaitForChild("PixelArt"))
 local WorldView = require(ReplicatedStorage:WaitForChild("WorldView"))
+local PLACE_ROLE = Config.PlaceRole() -- "Lobby" (menus only), "Match" (stages) or "Single"
+local IS_MATCH_PLACE = PLACE_ROLE == "Match"
 
 -- If the server scripts fail to start, the remotes below never appear and the screen would stay
 -- empty. After 10 seconds, say so (and what is missing) instead of showing nothing.
@@ -249,7 +251,10 @@ local worldGui = make("ScreenGui", {
 	DisplayOrder = 0,
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 }, playerGui)
-WorldView.start(worldGui, { rightInset = SHOP_W, topInset = 176, bottomInset = 156 })
+-- the Lobby place has no map (stages are played in the Match place), so nothing to draw there
+if PLACE_ROLE ~= "Lobby" then
+	WorldView.start(worldGui, { rightInset = SHOP_W, topInset = 176, bottomInset = 156 })
+end
 
 -- ===== Map camera: mouse wheel zooms; right/middle-drag, WASD / arrow keys or a finger drag pan; C re-centers
 local DRAG_THRESHOLD = 6   -- pixels a right-drag must move before it counts as panning (a plain right-click cancels)
@@ -1942,7 +1947,6 @@ Remote.StageRewards.OnClientEvent:Connect(function(rewards)
 end)
 
 -- Match place: there is no main menu. Until the stage starts, show a waiting screen.
-local IS_MATCH_PLACE = Config.Places.Match ~= 0 and game.PlaceId == Config.Places.Match
 local function buildWaitingScreen()
 	local gui = make("ScreenGui", { Name = "TDWaitingGui", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 3, Enabled = false }, playerGui)
 	local back = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = rgb(20, 22, 34), BorderSizePixel = 0 }, gui)
