@@ -995,15 +995,17 @@ if USE_TELEPORT and not RunService:IsStudio() then
 	task.spawn(function()
 		local ok, err = pcall(function()
 			local pages = game:GetService("AssetService"):GetGamePlacesAsync()
+			local found = {}
 			while true do
 				for _, place in ipairs(pages:GetCurrentPage()) do
 					if place.PlaceId == Config.Places.Match then return end
+					table.insert(found, ("%s (%d)"):format(tostring(place.Name), place.PlaceId))
 				end
 				if pages.IsFinished then break end
 				pages:AdvanceToNextPageAsync()
 			end
-			matchPlaceProblem = ("Place %d is not part of this experience (add it under Places)"):format(Config.Places.Match)
-			warn("GameServer: " .. matchPlaceProblem)
+			matchPlaceProblem = ("Place %d is not in this experience (GameId %d)"):format(Config.Places.Match, game.GameId)
+			warn(("GameServer: %s. Places in this experience: %s"):format(matchPlaceProblem, table.concat(found, ", ")))
 		end)
 		if not ok then warn("GameServer: couldn't list this experience's places: " .. tostring(err)) end
 	end)
@@ -1037,8 +1039,9 @@ local function teleportRoom(room)
 		Lobby.SetStarted(room, false)
 		local reason = tostring(result):gsub("^.-:%d+: ", "") -- drop the script location
 		warn("GameServer: teleport to the Match place failed: " .. reason)
-		if matchPlaceProblem then reason = matchPlaceProblem end
-		return false, "Couldn't start: " .. reason:sub(1, 120)
+		local text = "Couldn't start: " .. reason:sub(1, 100)
+		if matchPlaceProblem then text ..= "  |  " .. matchPlaceProblem end
+		return false, text
 	end
 	-- if one player's teleport fails, retry them into the same reserved server
 	local retryOptions = Instance.new("TeleportOptions")
