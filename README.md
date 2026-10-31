@@ -32,12 +32,13 @@ Then open the place in Roblox Studio and click **Connect** in the Rojo plugin.
 | **Waves** | Enemy count = `6 + 3.2 × round` (54 in round 15). Each enemy spawns as tier 1–5, which fixes its speed and base HP; health grows 9 % per round. Its color steps down through the tiers as it loses health. Enemies walk the path center in single file, keeping `EnemySpacing` studs apart: a faster enemy queues behind a slower one instead of overlapping it. The boss closes round 15 with 200 HP. |
 | **Auto Skip** | **ON**: the next round starts once 60–70 % of the current wave has spawned. **OFF**: no timer while the wave spawns (the HUD shows `WAVE r  x/y`); after the last enemy appears, a 20 s timer starts and the next round begins when it runs out or every enemy is gone. The match follows the host's setting. |
 | **Game speed** | x1 / x2 / x3 for everyone. The stage timer runs in real time. |
-| **Units** | **Herobrine** (Rare), **Zaruto**, **Fluffy**, **Ichitoe** (Epic) and **Voidseer** (Legendary). Each has 5 **Refine** levels (in-match upgrades; REFINE buys one, MAX buys as many as you can afford). The last levels add an ability: Burn (damage over time) or Slow. 6 targeting modes (First / Last / Strongest / Weakest / Closest / None), selling at a 50 % refund. Each player can have up to 3 copies of each unit on the map (`DefaultPlaceLimit`; a unit can set its own `PlaceLimit`). |
+| **Units** | **Herobrine** (Rare), **Zaruto**, **Fluffy**, **Ichitoe** (Epic) and **Voidseer** (Legendary). Each has 5 in-match **Upgrade** levels (UPGRADE buys one, MAX buys as many as you can afford; units show `UP1`–`UP5`). The last levels add an ability: Burn (damage over time) or Slow. 6 targeting modes (First / Last / Strongest / Weakest / Closest / None), selling at a 50 % refund. Each player can have up to 3 copies of each unit on the map (`DefaultPlaceLimit`; a unit can set its own `PlaceLimit`). |
 | **Money** | Per player, earned per whole HP removed (`RewardPerPop` 2, burn damage included) plus a round bonus for everyone (160, +30 per round). A solo full clear earns about 13,200. Turn on `Config.DebugEconomy` to print income by source at stage end. |
 | **Saved profile** | Gems, owned units (one record per unit: id, level, XP, trait, lock), items, settings and lifetime stats. Kept in a DataStore with a session lock, autosave, retries and versioned migrations. |
-| **Rewards** | Gems, Wisp Essence and Void Crystal at stage end, based on result, round reached, kills and whether the boss died. |
-| **Summon** | 100 Gems per roll from a weighted pool. The pool currently holds only Herobrine. |
-| **Inventory UI** | Two tabs: Units (owned / locked) and Materials. |
+| **Rewards** | Gems, Wisp Essence and Void Crystal at stage end, based on result, round reached, kills and whether the boss died. Every equipped unit also gets XP (`20 + 4 × round`, doubled on a clear). |
+| **Summon** | 100 Gems per roll from a weighted pool (Rare 71 % / Epic 24 % / Legendary 5 %). The first copy of a new unit is equipped automatically if a loadout slot is free. |
+| **Inventory & loadout** | **Loadout** of 6 slots: only equipped units appear in the in-match shop (keys 1–6). **Units** tab: one card per copy, sortable (rarity / level / newest) and filterable by rarity; a detail panel to equip / unequip, feed Wisp Essence, lock, and sell (for gems; locked and equipped units can't be sold). **Materials** tab. |
+| **Unit leveling** | Each copy has a saved level (cap by rarity: Rare 30, Epic 40, Legendary 50, Mythic 60). +3 % damage and +0.1 range per level. XP from stages and from feeding Wisp Essence (10 XP each). Separate from in-match upgrades. |
 | **Settings** | Auto Skip, health bars (hover / always), resume, surrender. |
 | **Host** | The player who has been in the server longest is the host. Only the host can start, retry, return to menu, surrender, or change speed and Auto Skip. |
 | **Rendering** | Pixel map with path, cave and castle. Sprites with idle and recoil animations, health bars, shot bolts and particles, a placement ghost with a range ring, mouse-wheel zoom, and panning (right/middle-drag, WASD or arrow keys, one-finger drag on touch; `C` re-centers). |
@@ -99,9 +100,10 @@ Other state lives on other objects:
 |---|---|---|
 | `StartGame`, `BeginMatch`, `Retry`, `ReturnToMenu`, `Surrender` | Event | Match flow (host only) |
 | `SetSpeed`, `SetAutoSkip`, `SetTargeting` | Event | Match and unit settings (speed / Auto Skip: host only) |
-| `PlaceTower(unitId, pos)`, `UpgradeTower(model, all)`, `SellTower` | Function | Unit actions (validated on the server). `unitId` is a key of `profile.Units`; `all = true` refines as many levels as affordable |
+| `PlaceTower(unitId, pos)`, `UpgradeTower(model, all)`, `SellTower` | Function | Unit actions (validated on the server). `unitId` is a key of `profile.Units`; `all = true` buys as many upgrade levels as affordable |
 | `Shot` | UnreliableEvent | Tells clients to draw a shot |
 | `GetProfile`, `Summon` | Function | Profile data |
+| `EquipUnit(uid, slot)`, `LockUnit(uid, locked)`, `SellUnits({uid})`, `FeedUnit(uid, amount)` | Function | Inventory actions (refused during a stage) |
 | `ProfileUpdated`, `StageRewards`, `SetSetting` | Event | Profile data |
 
 ### Timing
@@ -126,7 +128,8 @@ Nearly everything is in [Config.luau](src/ReplicatedStorage/Config.luau):
 - **New unit:** add a sprite to `PixelArt` (`defs.<Name>`) and an entry to `Config.Units`. Then add it to `Config.UnitOrder` to show it in the shop, and to `Config.Summon.Pool` to make it summonable.
 - **New material:** add it to `Config.Materials` and `Config.MaterialOrder`. Grant it with `PlayerData.AddMaterial(player, key, n)`.
 - **Waves and economy:** `EnemiesBase`, `EnemiesPerRound`, `HpPerRound`, `WaveClearTime`, `EnemySpacing`, `RewardPerPop`, `RoundBonus`, `StartMoney`, `DefaultPlaceLimit`, and `Tiers[*].Speed` / `HP`.
-- **Refine abilities:** add `Ability = { Kind = "Burn", Dps, Duration }` or `{ Kind = "Slow", Pct, Duration }` to a `Levels[i]` entry.
+- **Upgrade abilities:** add `Ability = { Kind = "Burn", Dps, Duration }` or `{ Kind = "Slow", Pct, Duration }` to a `Levels[i]` entry.
+- **Unit leveling:** `Config.Leveling` (XP per stage, XP per Essence, damage / range per level), `Config.XpToNext(level)`, level caps in `Config.Rarities[*].MaxLevel`.
 - **Path:** move or add the `Workspace.Waypoints` parts, which are numbered in order.
 
 ---
@@ -136,6 +139,5 @@ Nearly everything is in [Config.luau](src/ReplicatedStorage/Config.luau):
 These are all covered in the spec:
 
 - **One match per server.** Everyone in the server shares one match, and the host controls it. There's no party, lobby or voting yet.
-- **The shop picks the unit copy.** Until the loadout exists, placing a unit uses your highest-level copy of it.
-- **Little content.** There is one unit, one enemy type plus the boss, and one map.
+- **Little content.** There are five units, one enemy type plus the boss, and one map.
 - **x3 speed is free.** It is planned as a gamepass perk.

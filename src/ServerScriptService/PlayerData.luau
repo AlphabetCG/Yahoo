@@ -5,7 +5,7 @@
 --   Settings  = { AlwaysHealthBars = bool, AutoSkip = bool }
 --   Gems      = number
 --   Units     = { [uid] = { Id, Name, Level, XP, Trait, Locked, Obtained } }   (one entry per owned unit)
---   Loadout   = { [slot] = uid }                    (equipped units, used by the loadout later)
+--   Loadout   = { uid or "", ... }                   (Config.LoadoutSlots entries; "" = empty slot)
 --   Items     = { [itemKey] = amount }              (keys come from Config.Materials)
 --   Summon    = { Total, Pity = { [bannerId] = { [rarity] = pulls } } }
 --   Daily     = { Streak, LastClaimDay }
@@ -45,7 +45,16 @@ local SETTING_TYPES = {
 -- tables whose keys are open-ended (reconcile must not fill them with defaults)
 local OPEN_TABLES = { Units = true, Items = true, Loadout = true, Codes = true, Purchases = true, Pity = true }
 
-local store = DataStoreService:GetDataStore(STORE_NAME)
+-- GetDataStore throws in a place that was never published to Roblox: then everyone plays without saving
+local storeOk, store = pcall(function()
+	return DataStoreService:GetDataStore(STORE_NAME)
+end)
+if not storeOk then
+	warn("PlayerData: no DataStore (" .. tostring(store) .. "). Publish the place (File > Publish to Roblox) "
+		.. "and turn on Game Settings > Security > Enable Studio Access to API Services to save progress. "
+		.. "Playing without saving for now.")
+	store = nil
+end
 
 local PlayerData = {}
 local profiles = {}   -- [player] = profile
@@ -96,6 +105,95 @@ local function countUnits(units, unitName)
 	return total, ofName
 end
 
+-- ===== loadout =====
+-- Loadout is always an array of Config.LoadoutSlots strings: a unit id, or "" for an empty slot
+-- (no holes, so it saves to the DataStore and travels over remotes cleanly).
+local function normalizeLoadout(profile)
+	local old = typeof(profile.Loadout) == "table" and profile.Loadout or {}
+	local seen = {}
+	local loadout = {}
+	for slot = 1, Config.LoadoutSlots do
+		local uid = old[slot]
+		if typeof(uid) ~= "string" or not profile.Units[uid] or seen[uid] then uid = "" end
+		if uid ~= "" then seen[uid] = true end
+		loadout[slot] = uid
+	end
+	profile.Loadout = loadout
+end
+
+local function loadoutSlotOf(profile, uid)
+	for slot, id in ipairs(profile.Loadout) do
+		if id == uid then return slot end
+	end
+	return nil
+end
+
+local function firstEmptySlot(profile)
+	for slot, id in ipairs(profile.Loadout) do
+		if id == "" then return slot end
+	end
+	return nil
+end
+
+-- the best copy of a unit type: highest level, then the oldest
+local function betterCopy(a, b)
+	if a.Level ~= b.Level then return a.Level > b.Level end
+	return (a.Obtained or 0) < (b.Obtained or 0)
+end
+
+-- Puts the best copy of every unit type that isn't equipped yet into the empty slots, rarest first.
+local function fillLoadout(profile)
+	local equippedNames = {}
+	for _, uid in ipairs(profile.Loadout) do
+		if uid ~= "" then equippedNames[profile.Units[uid].Name] = true end
+	end
+	local best = {}
+	for _, u in pairs(profile.Units) do
+		if Config.Units[u.Name] and not equippedNames[u.Name] and (not best[u.Name] or betterCopy(u, best[u.Name])) then
+			best[u.Name] = u
+		end
+	end
+	local list = {}
+	for _, u in pairs(best) do table.insert(list, u) end
+	table.sort(list, function(a, b)
+		local ra, rb = Config.RarityOf(a.Name).Order, Config.RarityOf(b.Name).Order
+		if ra ~= rb then return ra > rb end
+		return a.Name < b.Name
+	end)
+	for _, u in ipairs(list) do
+		local slot = firstEmptySlot(profile)
+		if not slot then break end
+		profile.Loadout[slot] = u.Id
+	end
+end
+
+-- ===== unit leveling =====
+-- Adds XP to a unit copy, levelling it up (capped by its rarity). Returns the number of levels gained.
+local function addXp(unit, xp)
+	local maxLevel = Config.MaxUnitLevel(unit.Name)
+	if unit.Level >= maxLevel then
+		unit.XP = 0
+		return 0
+	end
+	unit.XP = (unit.XP or 0) + math.max(0, math.floor(xp))
+	local gained = 0
+	while unit.Level < maxLevel and unit.XP >= Config.XpToNext(unit.Level) do
+		unit.XP -= Config.XpToNext(unit.Level)
+		unit.Level += 1
+		gained += 1
+	end
+	if unit.Level >= maxLevel then unit.XP = 0 end
+	return gained
+end
+
+-- XP still needed to reach the level cap
+local function xpToCap(unit)
+	local maxLevel = Config.MaxUnitLevel(unit.Name)
+	local need = 0
+	for level = unit.Level, maxLevel - 1 do need += Config.XpToNext(level) end
+	return math.max(0, need - (unit.XP or 0))
+end
+
 local function defaultProfile()
 	local units = {}
 	for name, copies in pairs(Config.StarterUnits) do
@@ -108,7 +206,7 @@ local function defaultProfile()
 		Settings = { AlwaysHealthBars = false, AutoSkip = Config.AutoSkipDefault },
 		Gems = Config.StarterGems,
 		Units = units,
-		Loadout = {},
+		Loadout = {}, -- filled by normalizeLoadout / fillLoadout when the profile loads
 		Items = {},
 		Summon = { Total = 0, Pity = {} },
 		Daily = { Streak = 0, LastClaimDay = -1 },
@@ -180,7 +278,7 @@ end
 -- release = true drops the session lock (player leaving / server closing)
 function PlayerData.Save(player, release)
 	local profile = profiles[player]
-	if not profile or loadFailed[player] then return false end
+	if not profile or loadFailed[player] or not store then return false end
 	-- wait for a running save instead of skipping, so the final save on leave is never lost
 	local t0 = os.clock()
 	while saving[player] and os.clock() - t0 < 30 do task.wait(0.1) end
@@ -235,6 +333,7 @@ end
 -- Reads the profile and takes the session lock in one UpdateAsync.
 -- Returns status ("ok" | "locked" | "error"), data (table or nil), err
 local function tryAcquire(player)
+	if not store then return "nostore", nil end
 	local status, result = "ok", nil
 	local ok, err = pcall(function()
 		store:UpdateAsync(keyFor(player), function(old)
@@ -254,6 +353,7 @@ local function tryAcquire(player)
 end
 
 local function releaseLock(player)
+	if not store then return end
 	pcall(function()
 		store:UpdateAsync(keyFor(player), function(old)
 			if typeof(old) ~= "table" or typeof(old.Lock) ~= "table" or old.Lock.JobId ~= JOB_ID then
@@ -270,7 +370,7 @@ local function loadProfile(player)
 	local errors, lockedTries = 0, 0
 	while true do
 		status, data, err = tryAcquire(player)
-		if status == "ok" then break end
+		if status == "ok" or status == "nostore" then break end
 		if player.Parent == nil then return end
 		if status == "error" then
 			errors += 1
@@ -315,6 +415,12 @@ local function loadProfile(player)
 			end
 		end
 	end
+	normalizeLoadout(profile)
+	local anyEquipped = false
+	for _, uid in ipairs(profile.Loadout) do
+		if uid ~= "" then anyEquipped = true end
+	end
+	if not anyEquipped then fillLoadout(profile) end -- new players / saves from before the loadout existed
 	profiles[player] = profile
 	replicate(player)
 	if not loadFailed[player] then saveSoon(player) end
@@ -346,6 +452,12 @@ function PlayerData.GetUnit(player, uid)
 	local profile = profiles[player]
 	if not profile or typeof(uid) ~= "string" then return nil end
 	return profile.Units[uid]
+end
+
+-- Is this unit copy in the player's loadout? (only equipped units can be placed)
+function PlayerData.IsEquipped(player, uid)
+	local profile = profiles[player]
+	return profile ~= nil and typeof(uid) == "string" and uid ~= "" and loadoutSlotOf(profile, uid) ~= nil
 end
 
 -- Does the player own at least one unit called unitName?
@@ -422,6 +534,9 @@ function PlayerData.Summon(player)
 	local _, before = countUnits(profile.Units, picked)
 	profile.Gems -= Config.Summon.Cost
 	local unit = newUnit(profile.Units, picked)
+	if before == 0 and firstEmptySlot(profile) then
+		profile.Loadout[firstEmptySlot(profile)] = unit.Id -- first copy of a new unit: equip it right away
+	end
 	profile.Summon.Total += 1
 	profile.Stats.Summons += 1
 	touch(player)
@@ -437,7 +552,8 @@ function PlayerData.Summon(player)
 end
 
 -- Rewards for a finished stage. result = { Won, Round, Kills, BossKilled, Surrender }
--- Returns { Gems = n, Materials = { key = n } } (also saved to the profile's Items).
+-- Returns { Gems = n, Materials = { key = n }, UnitXP = n, LevelUps = { { Name, Level } } }
+-- (also saved to the profile). Every equipped unit gets UnitXP.
 function PlayerData.GrantStageRewards(player, result)
 	local profile = profiles[player]
 	local rewards = { Gems = 0, Materials = {} }
@@ -455,9 +571,106 @@ function PlayerData.GrantStageRewards(player, result)
 	profile.Stats.Kills += result.Kills
 	if result.Won then profile.Stats.StagesCleared += 1 end
 	if result.BossKilled then profile.Stats.BossesKilled += 1 end
+
+	local L = Config.Leveling
+	local xp = (L.XpBase + L.XpPerRound * result.Round) * (result.Won and L.VictoryMult or 1)
+	rewards.UnitXP = xp
+	rewards.LevelUps = {}
+	for _, uid in ipairs(profile.Loadout) do
+		local unit = profile.Units[uid]
+		if unit and addXp(unit, xp) > 0 then
+			table.insert(rewards.LevelUps, { Name = unit.Name, Level = unit.Level })
+		end
+	end
 	touch(player)
 	saveSoon(player)
 	return rewards
+end
+
+-- ===== inventory actions (only outside a stage) =====
+local function busy()
+	return workspace:GetAttribute("State") == "Playing"
+end
+
+-- Puts unit `uid` into loadout `slot` (moving it if it is already in another slot).
+-- uid = "" empties the slot. slot = nil uses the first empty slot.
+function PlayerData.Equip(player, uid, slot)
+	local profile = profiles[player]
+	if not profile then return false, "Your data is still loading" end
+	if busy() then return false, "You can't change your loadout during a stage" end
+	if typeof(uid) ~= "string" then return false, "Bad request" end
+	if slot ~= nil and (typeof(slot) ~= "number" or slot % 1 ~= 0 or slot < 1 or slot > Config.LoadoutSlots) then
+		return false, "Bad slot"
+	end
+	if uid == "" then
+		if not slot then return false, "Bad slot" end
+		profile.Loadout[slot] = ""
+	else
+		if not profile.Units[uid] then return false, "You do not own this unit" end
+		local current = loadoutSlotOf(profile, uid)
+		slot = slot or current or firstEmptySlot(profile)
+		if not slot then return false, "Your loadout is full: pick a slot" end
+		if current then profile.Loadout[current] = "" end
+		profile.Loadout[slot] = uid
+	end
+	touch(player)
+	saveSoon(player)
+	return true
+end
+
+function PlayerData.SetLocked(player, uid, locked)
+	local profile = profiles[player]
+	if not profile then return false, "Your data is still loading" end
+	local unit = typeof(uid) == "string" and profile.Units[uid]
+	if not unit or typeof(locked) ~= "boolean" then return false, "Bad request" end
+	unit.Locked = locked
+	touch(player)
+	saveSoon(player)
+	return true
+end
+
+-- Sells unit copies for gems (Config.Rarities[r].SellValue). Locked and equipped units are skipped.
+-- Returns true, gems earned, units sold.
+function PlayerData.SellUnits(player, uids)
+	local profile = profiles[player]
+	if not profile then return false, "Your data is still loading" end
+	if busy() then return false, "You can't sell units during a stage" end
+	if typeof(uids) ~= "table" or #uids == 0 or #uids > Config.MaxUnitsOwned then return false, "Bad request" end
+	local owned = countUnits(profile.Units, "")
+	local gems, sold = 0, 0
+	for _, uid in ipairs(uids) do
+		local unit = typeof(uid) == "string" and profile.Units[uid]
+		if unit and not unit.Locked and not loadoutSlotOf(profile, uid) and owned - sold > 1 then
+			profile.Units[uid] = nil
+			gems += Config.RarityOf(unit.Name).SellValue
+			sold += 1
+		end
+	end
+	if sold == 0 then return false, "Nothing to sell (locked, equipped, or your last unit)" end
+	profile.Gems += gems
+	touch(player)
+	saveSoon(player)
+	return true, gems, sold
+end
+
+-- Feeds up to `amount` Wisp Essence to a unit (never more than it needs to reach its level cap).
+-- Returns true, essence used, levels gained.
+function PlayerData.FeedUnit(player, uid, amount)
+	local profile = profiles[player]
+	if not profile then return false, "Your data is still loading" end
+	if busy() then return false, "You can't level units during a stage" end
+	local unit = typeof(uid) == "string" and profile.Units[uid]
+	if not unit or typeof(amount) ~= "number" or amount < 1 then return false, "Bad request" end
+	local have = profile.Items.WispEssence or 0
+	if have <= 0 then return false, "No Wisp Essence" end
+	local need = math.ceil(xpToCap(unit) / Config.Leveling.XpPerEssence)
+	if need <= 0 then return false, "Already max level" end
+	local use = math.min(math.floor(amount), have, need)
+	profile.Items.WispEssence = have - use
+	local gained = addXp(unit, use * Config.Leveling.XpPerEssence)
+	touch(player)
+	saveSoon(player)
+	return true, use, gained
 end
 
 -- ===== setup =====
@@ -474,6 +687,27 @@ function PlayerData.init(remotesFolder)
 	local getProfile = newRemote("RemoteFunction", "GetProfile")
 	local setSetting = newRemote("RemoteEvent", "SetSetting")
 	local summon = newRemote("RemoteFunction", "Summon")
+	local equipUnit = newRemote("RemoteFunction", "EquipUnit")
+	local lockUnit = newRemote("RemoteFunction", "LockUnit")
+	local sellUnits = newRemote("RemoteFunction", "SellUnits")
+	local feedUnit = newRemote("RemoteFunction", "FeedUnit")
+
+	equipUnit.OnServerInvoke = function(player, uid, slot)
+		if not RateLimit.allow(player, "EquipUnit", 5) then return false, "Please wait" end
+		return PlayerData.Equip(player, uid, slot)
+	end
+	lockUnit.OnServerInvoke = function(player, uid, locked)
+		if not RateLimit.allow(player, "LockUnit", 5) then return false, "Please wait" end
+		return PlayerData.SetLocked(player, uid, locked)
+	end
+	sellUnits.OnServerInvoke = function(player, uids)
+		if not RateLimit.allow(player, "SellUnits", 3) then return false, "Please wait" end
+		return PlayerData.SellUnits(player, uids)
+	end
+	feedUnit.OnServerInvoke = function(player, uid, amount)
+		if not RateLimit.allow(player, "FeedUnit", 5) then return false, "Please wait" end
+		return PlayerData.FeedUnit(player, uid, amount)
+	end
 
 	getProfile.OnServerInvoke = function(player)
 		if not RateLimit.allow(player, "GetProfile", 2) then return nil end

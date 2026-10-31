@@ -15,23 +15,62 @@ local Config = require(ReplicatedStorage:WaitForChild("Config"))
 local PixelArt = require(ReplicatedStorage:WaitForChild("PixelArt"))
 local WorldView = require(ReplicatedStorage:WaitForChild("WorldView"))
 
-local remotes = ReplicatedStorage:WaitForChild("Remotes")
-local startGameRemote = remotes:WaitForChild("StartGame")
-local returnToMenuRemote = remotes:WaitForChild("ReturnToMenu")
-local surrenderRemote = remotes:WaitForChild("Surrender")
-local setSpeedRemote = remotes:WaitForChild("SetSpeed")
-local setAutoSkipRemote = remotes:WaitForChild("SetAutoSkip")
-local beginMatchRemote = remotes:WaitForChild("BeginMatch")
-local retryRemote = remotes:WaitForChild("Retry")
-local placeTowerRemote = remotes:WaitForChild("PlaceTower")
-local upgradeTowerRemote = remotes:WaitForChild("UpgradeTower")
-local sellTowerRemote = remotes:WaitForChild("SellTower")
-local setTargetingRemote = remotes:WaitForChild("SetTargeting")
-local getProfileRemote = remotes:WaitForChild("GetProfile")
-local profileUpdatedRemote = remotes:WaitForChild("ProfileUpdated")
-local setSettingRemote = remotes:WaitForChild("SetSetting")
-local summonRemote = remotes:WaitForChild("Summon")
-local stageRewardsRemote = remotes:WaitForChild("StageRewards")
+-- If the server scripts fail to start, the remotes below never appear and the screen would stay
+-- empty. After 10 seconds, say so (and what is missing) instead of showing nothing.
+local waitingFor = "Remotes"
+local startupGui = nil
+task.delay(10, function()
+	if not waitingFor then return end
+	startupGui = Instance.new("ScreenGui")
+	startupGui.Name = "TDStartupGui"
+	startupGui.ResetOnSpawn = false
+	startupGui.DisplayOrder = 100
+	local text = Instance.new("TextLabel")
+	text.Size = UDim2.fromScale(1, 1)
+	text.BackgroundColor3 = Color3.fromRGB(20, 22, 34)
+	text.TextColor3 = Color3.fromRGB(255, 208, 84)
+	text.Font = Enum.Font.Arcade
+	text.TextSize = 24
+	text.TextWrapped = true
+	text.Text = "Waiting for the server... (missing: " .. tostring(waitingFor) .. ")\n"
+		.. "The server script probably stopped with an error: check View > Output in Studio."
+	text.Parent = startupGui
+	startupGui.Parent = playerGui
+end)
+local function waitRemote(parent, name)
+	waitingFor = name
+	return parent:WaitForChild(name)
+end
+
+local remotes = waitRemote(ReplicatedStorage, "Remotes")
+-- every RemoteEvent / RemoteFunction the client uses, by name (Remote.PlaceTower, ...)
+local Remote = {}
+for _, name in ipairs({
+	"StartGame",
+	"ReturnToMenu",
+	"Surrender",
+	"SetSpeed",
+	"SetAutoSkip",
+	"BeginMatch",
+	"Retry",
+	"PlaceTower",
+	"UpgradeTower",
+	"SellTower",
+	"SetTargeting",
+	"GetProfile",
+	"ProfileUpdated",
+	"SetSetting",
+	"Summon",
+	"StageRewards",
+	"EquipUnit",
+	"LockUnit",
+	"SellUnits",
+	"FeedUnit",
+}) do
+	Remote[name] = waitRemote(remotes, name)
+end
+waitingFor = nil
+if startupGui then startupGui:Destroy() end
 
 -- the player's saved data (settings, gems, units, items); filled in by the server
 -- profile.Units = { [uid] = { Id, Name, Level, ... } }: one entry per owned unit
@@ -45,22 +84,15 @@ local function unitCount(name)
 	end
 	return n
 end
-local function ownsUnit(name)
-	return unitCount(name) > 0
+-- the unit copy in loadout slot `slot` (nil when the slot is empty)
+local function slotUnit(slot)
+	local uid = profile and profile.Loadout and profile.Loadout[slot]
+	return (uid and uid ~= "" and profile.Units[uid]) or nil
 end
--- the owned copy of a unit that gets placed from the shop: highest level, then the oldest
--- (replaced by the loadout later)
-local function bestUnitId(name)
-	local best
-	if profile then
-		for _, u in pairs(profile.Units) do
-			if u.Name == name and (not best or u.Level > best.Level
-				or (u.Level == best.Level and (u.Obtained or 0) < (best.Obtained or 0))) then
-				best = u
-			end
-		end
-	end
-	return best and best.Id
+-- the loadout slot a unit copy is in (nil when it isn't equipped)
+local function loadoutSlotOf(uid)
+	if not profile or not profile.Loadout then return nil end
+	return table.find(profile.Loadout, uid)
 end
 
 -- the host (longest in the server) controls the match flow
@@ -579,7 +611,9 @@ local speedButton = pixelButton(shop, "SPEED  X1", UDim2.fromOffset(176, 56), UD
 -- =====================================================================
 --  Placement / selection state
 -- =====================================================================
-local selectedUnit = nil            -- unit chosen in the shop (placing mode)
+local selectedUnit = nil            -- unit name chosen in the shop (placing mode)
+local selectedUid = nil             -- ...the saved copy that will be placed
+local selectedSlot = nil            -- ...and its loadout slot
 local cards = {}
 local placing = false
 local selectedTower = nil           -- placed unit chosen for upgrading
@@ -634,7 +668,7 @@ local abilityLabel = label(upPanel, {
 	TextXAlignment = Enum.TextXAlignment.Left,
 	Text = "",
 })
-local upButton = pixelButton(upPanel, "REFINE", UDim2.new(1, -104, 0, 54), UDim2.new(0, 112, 0, 226), 22, GREEN_BTN, GREEN_EDGE, WHITE)
+local upButton = pixelButton(upPanel, "UPGRADE", UDim2.new(1, -104, 0, 54), UDim2.new(0, 112, 0, 226), 20, GREEN_BTN, GREEN_EDGE, WHITE)
 local upMaxButton = pixelButton(upPanel, "MAX", UDim2.fromOffset(76, 54), UDim2.new(1, -52, 0, 226), 22, GREEN_BTN, GREEN_EDGE, WHITE)
 
 -- targeting selector:  <  TARGET: FIRST  >
@@ -659,7 +693,7 @@ local function statText(name, cur, nxt, fn)
 	end
 	return ("%s  %s"):format(name, fn(cur))
 end
-local function fmtNum(v) return tostring(v) end
+local function fmtNum(v) return (("%.1f"):format(v):gsub("%.0$", "")) end
 
 local function sameAbility(a, b)
 	if a == nil or b == nil then return a == b end
@@ -673,12 +707,13 @@ local function refreshUpgradePanel()
 	end
 	local unitName = selectedTower:GetAttribute("UnitName")
 	local level = selectedTower:GetAttribute("Level") or 1
-	local cur = Config.GetStats(unitName, level)
+	local unitLevel = selectedTower:GetAttribute("UnitLevel") or 1
+	local cur = Config.ScaledStats(unitName, level, unitLevel)
 	if not cur then return end
-	local nxt = Config.GetStats(unitName, level + 1)
+	local nxt = Config.ScaledStats(unitName, level + 1, unitLevel)
 
 	upPanel.Visible = true
-	upTitle.Text = string.upper(unitName) .. "  LV " .. level
+	upTitle.Text = ("%s  LV%d  UP%d"):format(string.upper(unitName), unitLevel, level)
 	rowDamage.Text = statText("DAMAGE", cur.Damage, nxt and nxt.Damage, fmtNum)
 	rowRange.Text = statText("RANGE ", cur.Range, nxt and nxt.Range, fmtNum)
 	rowSpeed.Text = statText("SPA   ", cur.Cooldown, nxt and nxt.Cooldown, function(v)
@@ -708,7 +743,7 @@ local function refreshUpgradePanel()
 	setButtonColor(sellButton, mine and RED_BTN or GREY_BTN)
 
 	if not nxt then
-		upName.Text = "FULLY REFINED!"
+		upName.Text = "FULLY UPGRADED!"
 		upButton.Text = "MAX LEVEL"
 		setButtonColor(upButton, GREY_BTN)
 		setButtonColor(upMaxButton, GREY_BTN)
@@ -719,7 +754,7 @@ local function refreshUpgradePanel()
 		setButtonColor(upMaxButton, GREY_BTN)
 	else
 		upName.Text = "NEXT: " .. string.upper(nxt.Name)
-		upButton.Text = "REFINE  $" .. fmt(nxt.Cost)
+		upButton.Text = "UPGRADE  $" .. fmt(nxt.Cost)
 		local affordable = (player:GetAttribute("Money") or 0) >= nxt.Cost
 		setButtonColor(upButton, affordable and GREEN_BTN or rgb(150, 80, 70))
 		setButtonColor(upMaxButton, affordable and GREEN_BTN or rgb(150, 80, 70))
@@ -754,10 +789,10 @@ local function tryUpgrade(all)
 	if not selectedTower or upgrading then return end
 	upgrading = true
 	local ok, success, reason = pcall(function()
-		return upgradeTowerRemote:InvokeServer(selectedTower, all == true)
+		return Remote.UpgradeTower:InvokeServer(selectedTower, all == true)
 	end)
 	upgrading = false
-	if ok and not success then notify(reason or "Cannot refine") end
+	if ok and not success then notify(reason or "Cannot upgrade") end
 end
 upButton.MouseButton1Click:Connect(function() tryUpgrade(false) end)
 upMaxButton.MouseButton1Click:Connect(function() tryUpgrade(true) end)
@@ -770,7 +805,7 @@ sellButton.MouseButton1Click:Connect(function()
 	local model = selectedTower
 	selling = true
 	local ok, success, result = pcall(function()
-		return sellTowerRemote:InvokeServer(model)
+		return Remote.SellTower:InvokeServer(model)
 	end)
 	selling = false
 	if ok and not success then notify(result or "Cannot sell") end
@@ -783,7 +818,7 @@ local function cycleTarget(step)
 	local current = selectedTower:GetAttribute("Targeting") or "First"
 	local idx = table.find(modes, current) or 1
 	idx = (idx - 1 + step) % #modes + 1
-	setTargetingRemote:FireServer(selectedTower, modes[idx])
+	Remote.SetTargeting:FireServer(selectedTower, modes[idx])
 end
 targetPrev.MouseButton1Click:Connect(function() cycleTarget(-1) end)
 targetNext.MouseButton1Click:Connect(function() cycleTarget(1) end)
@@ -804,16 +839,15 @@ end
 local function refreshCards()
 	local money = player:GetAttribute("Money") or 0
 	local byUnit = myPlaced()
-	for name, card in pairs(cards) do
-		local unit = Config.Units[name]
-		local limit = Config.PlaceLimit(name)
-		local usable = money >= unit.Cost and (byUnit[name] or 0) < limit
-		card.Button.Visible = ownsUnit(name)
-		card.Cost.Text = ("$%s  %d/%d"):format(fmt(unit.Cost), byUnit[name] or 0, limit)
+	for slot, card in pairs(cards) do
+		local unit = Config.Units[card.Name]
+		local limit = Config.PlaceLimit(card.Name)
+		local usable = money >= unit.Cost and (byUnit[card.Name] or 0) < limit
+		card.Cost.Text = ("$%s  %d/%d"):format(fmt(unit.Cost), byUnit[card.Name] or 0, limit)
 		card.Cost.TextColor3 = usable and GOLD or RED
 		card.Button.BackgroundColor3 = usable and PANEL_LIGHT or rgb(36, 42, 62)
-		card.Stroke.Color = (selectedUnit == name) and GOLD or PANEL_EDGE
-		card.Stroke.Thickness = (selectedUnit == name) and 4 or 3
+		card.Stroke.Color = (selectedSlot == slot) and GOLD or PANEL_EDGE
+		card.Stroke.Thickness = (selectedSlot == slot) and 4 or 3
 	end
 end
 towersFolder.ChildAdded:Connect(function() refreshCards() end)
@@ -832,13 +866,15 @@ local function updateHint()
 	end
 end
 
-local function selectUnit(name)
-	selectedUnit = nil
+-- slot = loadout slot to place from (nil = stop placing)
+local function selectUnit(slot)
+	selectedUnit, selectedUid, selectedSlot = nil, nil, nil
 	WorldView.clearGhost()
-	if name and currentState() == "Playing" and Config.Units[name] and ownsUnit(name) then
+	local unit = slot and slotUnit(slot)
+	if unit and currentState() == "Playing" and Config.Units[unit.Name] then
 		deselectTower()
-		selectedUnit = name
-		WorldView.setGhost(name)
+		selectedUnit, selectedUid, selectedSlot = unit.Name, unit.Id, slot
+		WorldView.setGhost(unit.Name, unit.Level)
 	end
 	updateHint()
 	refreshCards()
@@ -867,52 +903,87 @@ local function makePortrait(parent, name)
 	sprite.Parent = scaler
 end
 
-for i, name in ipairs(Config.UnitOrder) do
-	local unit = Config.Units[name]
-	local base = unit.Levels[1]
-	local card = make("TextButton", {
-		Name = name,
-		LayoutOrder = i,
-		Size = UDim2.new(1, 0, 0, 190),
-		BackgroundColor3 = PANEL_LIGHT,
-		BorderSizePixel = 0,
-		Text = "",
-		AutoButtonColor = false,
-	}, list)
-	local stroke = make("UIStroke", { Color = PANEL_EDGE, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, card)
-	makePortrait(card, name)
-	label(card, {
-		Position = UDim2.fromOffset(8, 8),
-		Size = UDim2.fromOffset(30, 18),
-		Text = "[" .. i .. "]",
-		TextSize = 16,
-		ZIndex = 3,
-	})
-	label(card, {
-		Position = UDim2.fromOffset(0, 94),
-		Size = UDim2.new(1, 0, 0, 26),
-		Text = string.upper(name),
-		TextSize = 22,
-		TextColor3 = Config.RarityOf(name).Color,
-	})
-	label(card, {
-		Position = UDim2.fromOffset(0, 120),
-		Size = UDim2.new(1, 0, 0, 20),
-		Text = ("DMG %d   RNG %d"):format(base.Damage, base.Range),
-		TextSize = 15,
-		TextColor3 = TEXT_DIM,
-	})
-	local costLabel = label(card, {
-		Position = UDim2.fromOffset(0, 146),
-		Size = UDim2.new(1, 0, 0, 30),
-		Text = "$" .. fmt(unit.Cost),
-		TextSize = 26,
-		TextColor3 = GOLD,
-	})
-	cards[name] = { Cost = costLabel, Stroke = stroke, Button = card }
-	card.MouseButton1Click:Connect(function()
-		if selectedUnit == name then selectUnit(nil) else selectUnit(name) end
-	end)
+-- One shop card per filled loadout slot ([1]-[6] = hotkeys). Rebuilt when the loadout changes.
+local emptyShopLabel = label(list, {
+	LayoutOrder = 99,
+	Size = UDim2.new(1, 0, 0, 80),
+	Text = "No units equipped.\nOpen the INVENTORY\nfrom the main menu.",
+	TextSize = 16,
+	TextWrapped = true,
+	TextColor3 = TEXT_DIM,
+	Visible = false,
+})
+local shopSignature = nil
+
+local function rebuildShop()
+	local parts = {}
+	for slot = 1, Config.LoadoutSlots do
+		local u = slotUnit(slot)
+		table.insert(parts, u and (u.Id .. ":" .. u.Level) or "-")
+	end
+	local signature = table.concat(parts, ",")
+	if signature == shopSignature then
+		refreshCards()
+		return
+	end
+	shopSignature = signature
+	if selectedSlot then selectUnit(nil) end
+	for _, c in pairs(cards) do c.Button:Destroy() end
+	table.clear(cards)
+
+	for slot = 1, Config.LoadoutSlots do
+		local u = slotUnit(slot)
+		if u and Config.Units[u.Name] then
+			local name = u.Name
+			local unit = Config.Units[name]
+			local stats = Config.ScaledStats(name, 1, u.Level)
+			local card = make("TextButton", {
+				Name = name,
+				LayoutOrder = slot,
+				Size = UDim2.new(1, 0, 0, 190),
+				BackgroundColor3 = PANEL_LIGHT,
+				BorderSizePixel = 0,
+				Text = "",
+				AutoButtonColor = false,
+			}, list)
+			local stroke = make("UIStroke", { Color = PANEL_EDGE, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, card)
+			makePortrait(card, name)
+			label(card, {
+				Position = UDim2.fromOffset(8, 8),
+				Size = UDim2.fromOffset(30, 18),
+				Text = "[" .. slot .. "]",
+				TextSize = 16,
+				ZIndex = 3,
+			})
+			label(card, {
+				Position = UDim2.fromOffset(0, 94),
+				Size = UDim2.new(1, 0, 0, 26),
+				Text = string.upper(name),
+				TextSize = 22,
+				TextColor3 = Config.RarityOf(name).Color,
+			})
+			label(card, {
+				Position = UDim2.fromOffset(0, 120),
+				Size = UDim2.new(1, 0, 0, 20),
+				Text = ("LV%d  DMG %s  RNG %s"):format(u.Level, fmtNum(stats.Damage), fmtNum(stats.Range)),
+				TextSize = 14,
+				TextColor3 = TEXT_DIM,
+			})
+			local costLabel = label(card, {
+				Position = UDim2.fromOffset(0, 146),
+				Size = UDim2.new(1, 0, 0, 30),
+				Text = "$" .. fmt(unit.Cost),
+				TextSize = 24,
+				TextColor3 = GOLD,
+			})
+			cards[slot] = { Cost = costLabel, Stroke = stroke, Button = card, Name = name }
+			card.MouseButton1Click:Connect(function()
+				if selectedSlot == slot then selectUnit(nil) else selectUnit(slot) end
+			end)
+		end
+	end
+	emptyShopLabel.Visible = next(cards) == nil
+	refreshCards()
 end
 
 -- =====================================================================
@@ -937,7 +1008,7 @@ local overlay = make("Frame", {
 local resultPanel = pixelPanel(overlay, {
 	AnchorPoint = Vector2.new(0.5, 0.5),
 	Position = UDim2.fromScale(0.5, 0.5),
-	Size = UDim2.fromOffset(560, 480),
+	Size = UDim2.fromOffset(560, 520),
 })
 local resultScale = make("UIScale", { Scale = 1 }, resultPanel)
 
@@ -997,8 +1068,8 @@ local rowTime = resultRow(196, "TIME")
 local rowLives = resultRow(242, "LIVES LEFT")
 local rewardsLabel = label(resultPanel, {
 	Position = UDim2.fromOffset(40, 290),
-	Size = UDim2.new(1, -80, 0, 76),
-	TextSize = 20,
+	Size = UDim2.new(1, -80, 0, 116),
+	TextSize = 18,
 	TextColor3 = GOLD,
 	TextWrapped = true,
 	Text = "",
@@ -1013,7 +1084,18 @@ local function rewardsText(r)
 		if n and n > 0 then table.insert(parts, "+" .. fmt(n) .. " " .. Config.Materials[key].Name) end
 	end
 	if #parts == 0 then return "NO REWARDS" end
-	return "REWARDS\n" .. table.concat(parts, "   ")
+	local text = "REWARDS\n" .. table.concat(parts, "   ")
+	if r.UnitXP and r.UnitXP > 0 then
+		text ..= "\n+" .. fmt(r.UnitXP) .. " XP to every equipped unit"
+	end
+	if r.LevelUps and #r.LevelUps > 0 then
+		local ups = {}
+		for _, up in ipairs(r.LevelUps) do
+			table.insert(ups, ("%s LV%d"):format(string.upper(up.Name), up.Level))
+		end
+		text ..= "\nLEVEL UP: " .. table.concat(ups, ", ")
+	end
+	return text
 end
 
 local retryButton = pixelButton(resultPanel, "RETRY", UDim2.fromOffset(250, 64), UDim2.new(0.5, -135, 1, -50), 30, GREEN_BTN, GREEN_EDGE, WHITE)
@@ -1117,7 +1199,7 @@ healthBarsButton.MouseButton1Click:Connect(function()
 	alwaysHealthBars = not alwaysHealthBars
 	WorldView.setAlwaysHealthBars(alwaysHealthBars)
 	refreshHealthBarsButton()
-	setSettingRemote:FireServer("AlwaysHealthBars", alwaysHealthBars) -- remembered between sessions
+	Remote.SetSetting:FireServer("AlwaysHealthBars", alwaysHealthBars) -- remembered between sessions
 end)
 
 local function closeSettings()
@@ -1143,7 +1225,7 @@ end)
 noButton.MouseButton1Click:Connect(closeSettings)
 yesButton.MouseButton1Click:Connect(function()
 	closeSettings()
-	surrenderRemote:FireServer()
+	Remote.Surrender:FireServer()
 end)
 
 -- =====================================================================
@@ -1193,176 +1275,559 @@ local function refreshHud()
 end
 
 -- =====================================================================
---  INVENTORY (units + materials) and SUMMON. Data comes from the server's saved profile.
+--  INVENTORY: loadout, unit list (sort / filter), unit details (equip, feed Essence, lock, sell),
+--  materials and SUMMON. Data comes from the server's saved profile; every action goes through
+--  a RemoteFunction and the server sends the updated profile back.
 -- =====================================================================
-local inventoryDim = make("TextButton", {
-	Size = UDim2.fromScale(1, 1),
-	BackgroundColor3 = BLACK,
-	BackgroundTransparency = 0.5,
-	BorderSizePixel = 0,
-	Text = "",
-	AutoButtonColor = false,
-	Visible = false,
-}, popupGui)
-local inventoryPanel = pixelPanel(inventoryDim, {
-	AnchorPoint = Vector2.new(0.5, 0.5),
-	Position = UDim2.fromScale(0.5, 0.5),
-	Size = UDim2.fromOffset(660, 520),
-})
-label(inventoryPanel, {
-	Position = UDim2.fromOffset(0, 12),
-	Size = UDim2.new(1, 0, 0, 44),
-	Text = "INVENTORY",
-	TextSize = 36,
-	TextColor3 = GOLD,
-})
-local gemsLabel = label(inventoryPanel, {
-	AnchorPoint = Vector2.new(1, 0),
-	Position = UDim2.new(1, -20, 0, 20),
-	Size = UDim2.fromOffset(200, 30),
-	Text = "GEMS: 0",
-	TextSize = 22,
-	TextColor3 = rgb(120, 220, 255),
-	TextXAlignment = Enum.TextXAlignment.Right,
-})
-local unitsTab = pixelButton(inventoryPanel, "UNITS", UDim2.fromOffset(200, 44), UDim2.new(0.5, -110, 0, 84), 24)
-local materialsTab = pixelButton(inventoryPanel, "MATERIALS", UDim2.fromOffset(200, 44), UDim2.new(0.5, 110, 0, 84), 24)
+-- Built inside its own function: Luau allows only 200 locals per function, and the main
+-- chunk of this script is close to that limit.
+local function buildInventory()
 
-local function newScroll()
-	return make("ScrollingFrame", {
-		Position = UDim2.fromOffset(20, 116),
-		Size = UDim2.new(1, -40, 0, 290),
+	local INV_W, INV_H = 780, 620
+	local inventoryDim = make("TextButton", {
+		Size = UDim2.fromScale(1, 1),
+		BackgroundColor3 = BLACK,
+		BackgroundTransparency = 0.5,
+		BorderSizePixel = 0,
+		Text = "",
+		AutoButtonColor = false,
+		Visible = false,
+	}, popupGui)
+	local inventoryPanel = pixelPanel(inventoryDim, {
+		AnchorPoint = Vector2.new(0.5, 0.5),
+		Position = UDim2.fromScale(0.5, 0.5),
+		Size = UDim2.fromOffset(INV_W, INV_H),
+		Active = true, -- clicks on the panel must not reach the dim background (which closes it)
+	})
+	-- the panel shrinks on small screens
+	local inventoryScale = make("UIScale", { Scale = 1 }, inventoryPanel)
+	local function fitInventory()
+		local size = inventoryDim.AbsoluteSize
+		if size.X > 0 then
+			inventoryScale.Scale = math.min(1, (size.X - 24) / INV_W, (size.Y - 24) / INV_H)
+		end
+	end
+	inventoryDim:GetPropertyChangedSignal("AbsoluteSize"):Connect(fitInventory)
+
+	label(inventoryPanel, {
+		Position = UDim2.fromOffset(0, 12),
+		Size = UDim2.new(1, 0, 0, 44),
+		Text = "INVENTORY",
+		TextSize = 36,
+		TextColor3 = GOLD,
+	})
+	local gemsLabel = label(inventoryPanel, {
+		AnchorPoint = Vector2.new(1, 0),
+		Position = UDim2.new(1, -20, 0, 20),
+		Size = UDim2.fromOffset(200, 30),
+		Text = "GEMS: 0",
+		TextSize = 22,
+		TextColor3 = rgb(120, 220, 255),
+		TextXAlignment = Enum.TextXAlignment.Right,
+	})
+	local unitsTab = pixelButton(inventoryPanel, "UNITS", UDim2.fromOffset(220, 44), UDim2.new(0, 140, 0, 82), 22)
+	local materialsTab = pixelButton(inventoryPanel, "MATERIALS", UDim2.fromOffset(200, 44), UDim2.new(0, 370, 0, 82), 22)
+
+	local unitsView = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, inventoryPanel)
+	local materialsView = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false }, inventoryPanel)
+
+	-- message line above the bottom buttons (summon results, errors, "pick a slot"...)
+	local invMessage = label(inventoryPanel, {
+		Position = UDim2.fromOffset(20, 532),
+		Size = UDim2.new(1, -40, 0, 24),
+		Text = "",
+		TextSize = 18,
+		TextColor3 = TEXT_DIM,
+	})
+	local function invNotify(text, color)
+		invMessage.Text = text
+		invMessage.TextColor3 = color or TEXT_DIM
+	end
+
+	local summonButton = pixelButton(inventoryPanel, "SUMMON - " .. Config.Summon.Cost .. " GEMS", UDim2.fromOffset(300, 52), UDim2.new(0.5, -110, 0, 584), 22, GREEN_BTN, GREEN_EDGE, WHITE)
+	local inventoryClose = pixelButton(inventoryPanel, "CLOSE", UDim2.fromOffset(180, 52), UDim2.new(0.5, 190, 0, 584), 24, RED_BTN, RED_EDGE, WHITE)
+
+	local function clearGui(container)
+		for _, child in ipairs(container:GetChildren()) do
+			if not child:IsA("UIListLayout") and not child:IsA("UIGridLayout") and not child:IsA("UIPadding") then
+				child:Destroy()
+			end
+		end
+	end
+
+	local function spaText(v)
+		return (("%.2f"):format(v):gsub("0+$", ""):gsub("%.$", "")) .. "s"
+	end
+
+	-- small sprite (for loadout slots); fits a box of `boxSize` pixels
+	local function miniSprite(parent, name, boxSize)
+		local w, h = PixelArt.size(name)
+		local scale = math.max(1, math.floor((boxSize - 8) / math.max(w, h)))
+		local holder = make("Frame", {
+			Position = UDim2.new(0.5, -(w * scale) / 2, 0.5, -(h * scale) / 2),
+			Size = UDim2.fromOffset(0, 0),
+			BackgroundTransparency = 1,
+		}, parent)
+		local scaler = make("Frame", { Size = UDim2.fromOffset(0, 0), BackgroundTransparency = 1 }, holder)
+		make("UIScale", { Scale = scale }, scaler)
+		PixelArt.sprite(name).Parent = scaler
+	end
+
+	-- ===== state =====
+	local inventoryTab = "Units"
+	local SORT_MODES = { "Rarity", "Level", "Newest" }
+	local sortMode = "Rarity"
+	local filterMode = "All"          -- "All" or a rarity name
+	local selectedInvUid = nil        -- unit shown in the detail panel
+	local pickingSlotFor = nil        -- unit waiting for the player to pick a loadout slot (loadout full)
+	local sellConfirmUntil = 0
+	local invBusy = false
+
+	-- calls an inventory RemoteFunction; shows the server's message when it says no
+	local function invCall(remote, ...)
+		if invBusy then return false end
+		invBusy = true
+		local args = table.pack(...)
+		local ok, success, a, b = pcall(function()
+			return remote:InvokeServer(table.unpack(args, 1, args.n))
+		end)
+		invBusy = false
+		if not ok then
+			invNotify("Something went wrong, try again", RED)
+			return false
+		end
+		if not success then invNotify(tostring(a or "Not possible"), RED) end
+		return success, a, b
+	end
+
+	-- ===== loadout strip =====
+	label(unitsView, {
+		Position = UDim2.fromOffset(20, 108),
+		Size = UDim2.fromOffset(300, 20),
+		Text = "LOADOUT  (used in stages, keys 1-" .. Config.LoadoutSlots .. ")",
+		TextSize = 15,
+		TextColor3 = GOLD,
+		TextXAlignment = Enum.TextXAlignment.Left,
+	})
+	local slotButtons = {}
+	for slot = 1, Config.LoadoutSlots do
+		local b = make("TextButton", {
+			Position = UDim2.fromOffset(20 + (slot - 1) * 76, 132),
+			Size = UDim2.fromOffset(68, 68),
+			BackgroundColor3 = rgb(20, 24, 40),
+			BorderSizePixel = 0,
+			Text = "",
+			AutoButtonColor = false,
+		}, unitsView)
+		local stroke = make("UIStroke", { Color = PANEL_EDGE, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, b)
+		local content = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, b)
+		slotButtons[slot] = { Button = b, Stroke = stroke, Content = content }
+	end
+
+	-- ===== sort / filter =====
+	local sortButton = pixelButton(unitsView, "SORT: RARITY", UDim2.fromOffset(200, 32), UDim2.new(0, 120, 0, 222), 15)
+	local filterButton = pixelButton(unitsView, "SHOW: ALL", UDim2.fromOffset(200, 32), UDim2.new(0, 330, 0, 222), 15)
+
+	-- ===== unit grid =====
+	local unitsScroll = make("ScrollingFrame", {
+		Position = UDim2.fromOffset(20, 246),
+		Size = UDim2.fromOffset(470, 280),
 		BackgroundColor3 = rgb(20, 24, 40),
 		BorderSizePixel = 0,
 		ScrollBarThickness = 8,
 		AutomaticCanvasSize = Enum.AutomaticSize.Y,
 		CanvasSize = UDim2.fromOffset(0, 0),
-		Visible = false,
-	}, inventoryPanel)
-end
-local unitsScroll = newScroll()
-make("UIGridLayout", { CellSize = UDim2.fromOffset(150, 196), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder }, unitsScroll)
-make("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingLeft = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10) }, unitsScroll)
-local materialsScroll = newScroll()
-make("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, materialsScroll)
-make("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 18), PaddingBottom = UDim.new(0, 10) }, materialsScroll)
+	}, unitsView)
+	make("UIGridLayout", { CellSize = UDim2.fromOffset(140, 176), CellPadding = UDim2.fromOffset(10, 10), SortOrder = Enum.SortOrder.LayoutOrder }, unitsScroll)
+	make("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingLeft = UDim.new(0, 10), PaddingBottom = UDim.new(0, 10) }, unitsScroll)
 
-local summonResult = label(inventoryPanel, {
-	Position = UDim2.fromOffset(20, 410),
-	Size = UDim2.new(1, -40, 0, 24),
-	Text = "",
-	TextSize = 18,
-	TextColor3 = TEXT_DIM,
-})
-local summonButton = pixelButton(inventoryPanel, "SUMMON - " .. Config.Summon.Cost .. " GEMS", UDim2.fromOffset(300, 56), UDim2.new(0.5, -110, 0, 466), 22, GREEN_BTN, GREEN_EDGE, WHITE)
-local inventoryClose = pixelButton(inventoryPanel, "CLOSE", UDim2.fromOffset(180, 56), UDim2.new(0.5, 190, 0, 466), 24, RED_BTN, RED_EDGE, WHITE)
+	-- ===== detail panel =====
+	local detail = make("Frame", {
+		Position = UDim2.fromOffset(505, 108),
+		Size = UDim2.fromOffset(255, 418),
+		BackgroundColor3 = PANEL_LIGHT,
+		BorderSizePixel = 0,
+	}, unitsView)
+	make("UIStroke", { Color = PANEL_EDGE, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, detail)
+	local detailEmpty = label(detail, {
+		Size = UDim2.fromScale(1, 1),
+		Text = "SELECT A UNIT",
+		TextSize = 20,
+		TextColor3 = TEXT_DIM,
+	})
+	local detailContent = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, Visible = false }, detail)
+	local detailPortrait = make("Frame", { Size = UDim2.new(1, 0, 0, 96), BackgroundTransparency = 1 }, detailContent)
+	local function detailLine(y, size, color)
+		return label(detailContent, {
+			Position = UDim2.fromOffset(14, y),
+			Size = UDim2.new(1, -28, 0, size + 4),
+			Text = "",
+			TextSize = size,
+			TextColor3 = color or WHITE,
+			TextXAlignment = Enum.TextXAlignment.Left,
+		})
+	end
+	local dName = detailLine(98, 22)
+	local dSub = detailLine(124, 16, GOLD)
+	local xpBack = make("Frame", { Position = UDim2.fromOffset(14, 148), Size = UDim2.new(1, -28, 0, 16), BackgroundColor3 = rgb(18, 22, 34), BorderSizePixel = 0 }, detailContent)
+	make("UIStroke", { Color = PANEL_EDGE, Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, xpBack)
+	local xpFill = make("Frame", { Size = UDim2.fromScale(0, 1), BackgroundColor3 = rgb(110, 200, 255), BorderSizePixel = 0 }, xpBack)
+	local xpText = label(xpBack, { Size = UDim2.fromScale(1, 1), Text = "", TextSize = 13, ZIndex = 3 })
+	local dDamage = detailLine(170, 16, TEXT_DIM)
+	local dRange = detailLine(190, 16, TEXT_DIM)
+	local dSpeed = detailLine(210, 16, TEXT_DIM)
+	local dAbility = detailLine(230, 14, GREEN)
+	local dState = detailLine(250, 15, TEXT_DIM)
+	local equipButton = pixelButton(detailContent, "EQUIP", UDim2.new(1, -28, 0, 40), UDim2.new(0.5, 0, 0, 294), 20, GREEN_BTN, GREEN_EDGE, WHITE)
+	local feed1Button = pixelButton(detailContent, "FEED 1", UDim2.fromOffset(108, 36), UDim2.new(0, 68, 0, 340), 16)
+	local feed10Button = pixelButton(detailContent, "FEED 10", UDim2.fromOffset(108, 36), UDim2.new(1, -68, 0, 340), 16)
+	local dEssence = label(detailContent, {
+		Position = UDim2.fromOffset(0, 360),
+		Size = UDim2.new(1, 0, 0, 16),
+		Text = "",
+		TextSize = 12,
+		TextColor3 = TEXT_DIM,
+	})
+	local lockButton = pixelButton(detailContent, "LOCK", UDim2.fromOffset(108, 34), UDim2.new(0, 68, 0, 394), 16)
+	local sellButtonInv = pixelButton(detailContent, "SELL", UDim2.fromOffset(108, 34), UDim2.new(1, -68, 0, 394), 16, RED_BTN, RED_EDGE, WHITE)
 
-local inventoryTab = "Units"
-local function clearGui(container)
-	for _, child in ipairs(container:GetChildren()) do
-		if not child:IsA("UIListLayout") and not child:IsA("UIGridLayout") and not child:IsA("UIPadding") then
-			child:Destroy()
+	-- ===== materials =====
+	local materialsScroll = make("ScrollingFrame", {
+		Position = UDim2.fromOffset(20, 110),
+		Size = UDim2.new(1, -40, 0, 416),
+		BackgroundColor3 = rgb(20, 24, 40),
+		BorderSizePixel = 0,
+		ScrollBarThickness = 8,
+		AutomaticCanvasSize = Enum.AutomaticSize.Y,
+		CanvasSize = UDim2.fromOffset(0, 0),
+	}, materialsView)
+	make("UIListLayout", { Padding = UDim.new(0, 8), SortOrder = Enum.SortOrder.LayoutOrder }, materialsScroll)
+	make("UIPadding", { PaddingTop = UDim.new(0, 10), PaddingLeft = UDim.new(0, 10), PaddingRight = UDim.new(0, 18), PaddingBottom = UDim.new(0, 10) }, materialsScroll)
+
+	-- ===== refresh =====
+	local refreshInventory -- defined below; the buttons call it
+
+	local function ownedUnitsSorted()
+		local owned = {}
+		if profile then
+			for _, u in pairs(profile.Units) do
+				if Config.Units[u.Name] and (filterMode == "All" or Config.Units[u.Name].Rarity == filterMode) then
+					table.insert(owned, u)
+				end
+			end
+		end
+		table.sort(owned, function(a, b)
+			local ra, rb = Config.RarityOf(a.Name).Order, Config.RarityOf(b.Name).Order
+			if sortMode == "Level" and a.Level ~= b.Level then return a.Level > b.Level end
+			if sortMode == "Newest" and (a.Obtained or 0) ~= (b.Obtained or 0) then return (a.Obtained or 0) > (b.Obtained or 0) end
+			if ra ~= rb then return ra > rb end
+			if a.Level ~= b.Level then return a.Level > b.Level end
+			if (a.Obtained or 0) ~= (b.Obtained or 0) then return (a.Obtained or 0) > (b.Obtained or 0) end
+			return a.Id < b.Id
+		end)
+		return owned
+	end
+
+	local function refreshLoadoutStrip()
+		for slot, s in pairs(slotButtons) do
+			s.Content:ClearAllChildren()
+			local u = slotUnit(slot)
+			local picking = pickingSlotFor ~= nil
+			s.Stroke.Color = picking and GOLD or ((u and u.Id == selectedInvUid) and WHITE or (u and Config.RarityOf(u.Name).Color or PANEL_EDGE))
+			s.Stroke.Thickness = (picking or (u and u.Id == selectedInvUid)) and 4 or 3
+			label(s.Content, { Position = UDim2.fromOffset(3, 2), Size = UDim2.fromOffset(20, 14), Text = tostring(slot), TextSize = 12, ZIndex = 3 })
+			if u then
+				miniSprite(s.Content, u.Name, 60)
+				label(s.Content, { Position = UDim2.new(0, 0, 1, -15), Size = UDim2.new(1, 0, 0, 14), Text = "LV" .. u.Level, TextSize = 12, TextColor3 = GOLD, ZIndex = 3 })
+			else
+				label(s.Content, { Size = UDim2.fromScale(1, 1), Text = "EMPTY", TextSize = 12, TextColor3 = TEXT_DIM })
+			end
 		end
 	end
-end
-
-local function spaText(v)
-	return (("%.2f"):format(v):gsub("0+$", ""):gsub("%.$", "")) .. "s"
-end
-
-local function refreshInventory()
-	unitsScroll.Visible = inventoryTab == "Units"
-	materialsScroll.Visible = inventoryTab == "Materials"
-	setButtonColor(unitsTab, inventoryTab == "Units" and GREEN_BTN or BTN)
-	setButtonColor(materialsTab, inventoryTab == "Materials" and GREEN_BTN or BTN)
-	gemsLabel.Text = "GEMS: " .. fmt(profile and profile.Gems or 0)
-	local canSummon = profile ~= nil and profile.Gems >= Config.Summon.Cost
-	setButtonColor(summonButton, canSummon and GREEN_BTN or GREY_BTN)
-
-	-- one card per owned unit (duplicates are separate units, never stacked),
-	-- sorted rarest first, then highest level, then newest; unowned units follow as LOCKED cards
-	clearGui(unitsScroll)
-	local owned = {}
-	if profile then
-		for _, u in pairs(profile.Units) do
-			if Config.Units[u.Name] then table.insert(owned, u) end
-		end
-	end
-	table.sort(owned, function(a, b)
-		local ra, rb = Config.RarityOf(a.Name).Order, Config.RarityOf(b.Name).Order
-		if ra ~= rb then return ra > rb end
-		if a.Level ~= b.Level then return a.Level > b.Level end
-		if (a.Obtained or 0) ~= (b.Obtained or 0) then return (a.Obtained or 0) > (b.Obtained or 0) end
-		return a.Id < b.Id
-	end)
 
 	local function unitCard(order, name, instance)
-		local base = Config.Units[name].Levels[1]
 		local rarity = Config.RarityOf(name)
-		local card = make("Frame", { LayoutOrder = order, BackgroundColor3 = instance and PANEL_LIGHT or rgb(36, 42, 62), BorderSizePixel = 0 }, unitsScroll)
-		make("UIStroke", { Color = instance and rarity.Color or PANEL_EDGE, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, card)
+		local selected = instance ~= nil and instance.Id == selectedInvUid
+		local card = make("TextButton", {
+			LayoutOrder = order,
+			BackgroundColor3 = instance and PANEL_LIGHT or rgb(36, 42, 62),
+			BorderSizePixel = 0,
+			Text = "",
+			AutoButtonColor = false,
+		}, unitsScroll)
+		make("UIStroke", {
+			Color = selected and WHITE or (instance and rarity.Color or PANEL_EDGE),
+			Thickness = selected and 4 or 3,
+			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
+		}, card)
 		makePortrait(card, name)
-		label(card, { Position = UDim2.fromOffset(0, 92), Size = UDim2.new(1, 0, 0, 24), Text = string.upper(name), TextSize = 20, TextColor3 = rarity.Color })
-		label(card, {
-			Position = UDim2.fromOffset(0, 116), Size = UDim2.new(1, 0, 0, 24),
-			Text = instance and ("LV " .. instance.Level .. "  " .. string.upper(Config.Units[name].Rarity or "")) or "LOCKED",
-			TextSize = 18, TextColor3 = instance and GOLD or RED,
-		})
-		label(card, { Position = UDim2.fromOffset(0, 140), Size = UDim2.new(1, 0, 0, 20), Text = ("DMG %d   RNG %d"):format(base.Damage, base.Range), TextSize = 14, TextColor3 = TEXT_DIM })
-		label(card, { Position = UDim2.fromOffset(0, 160), Size = UDim2.new(1, 0, 0, 20), Text = "SPA " .. spaText(base.Cooldown), TextSize = 14, TextColor3 = TEXT_DIM })
+		label(card, { Position = UDim2.fromOffset(0, 92), Size = UDim2.new(1, 0, 0, 22), Text = string.upper(name), TextSize = 18, TextColor3 = rarity.Color })
+		if instance then
+			label(card, {
+				Position = UDim2.fromOffset(0, 114), Size = UDim2.new(1, 0, 0, 20),
+				Text = ("LV %d/%d"):format(instance.Level, Config.MaxUnitLevel(name)),
+				TextSize = 16, TextColor3 = GOLD,
+			})
+			local stats = Config.ScaledStats(name, 1, instance.Level)
+			label(card, { Position = UDim2.fromOffset(0, 136), Size = UDim2.new(1, 0, 0, 18), Text = ("DMG %s  RNG %s"):format(fmtNum(stats.Damage), fmtNum(stats.Range)), TextSize = 13, TextColor3 = TEXT_DIM })
+			local slot = loadoutSlotOf(instance.Id)
+			if slot then
+				label(card, { Position = UDim2.fromOffset(8, 8), Size = UDim2.fromOffset(30, 16), Text = "E" .. slot, TextSize = 14, TextColor3 = GREEN, ZIndex = 3 })
+			end
+			if instance.Locked then
+				label(card, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -8, 0, 8), Size = UDim2.fromOffset(44, 16), Text = "LOCK", TextSize = 13, TextColor3 = RED, ZIndex = 3 })
+			end
+			card.MouseButton1Click:Connect(function()
+				selectedInvUid = instance.Id
+				pickingSlotFor = nil
+				sellConfirmUntil = 0
+				refreshInventory()
+			end)
+		else
+			label(card, { Position = UDim2.fromOffset(0, 114), Size = UDim2.new(1, 0, 0, 20), Text = "NOT OWNED", TextSize = 16, TextColor3 = RED })
+			label(card, { Position = UDim2.fromOffset(0, 136), Size = UDim2.new(1, 0, 0, 18), Text = string.upper(Config.Units[name].Rarity or ""), TextSize = 13, TextColor3 = TEXT_DIM })
+		end
 	end
 
-	for i, u in ipairs(owned) do
-		unitCard(i, u.Name, u)
+	local function refreshUnitGrid()
+		clearGui(unitsScroll)
+		local owned = ownedUnitsSorted()
+		for i, u in ipairs(owned) do unitCard(i, u.Name, u) end
+		-- units not owned yet (collection hint)
+		for i, name in ipairs(Config.UnitOrder) do
+			if unitCount(name) == 0 and (filterMode == "All" or Config.Units[name].Rarity == filterMode) then
+				unitCard(#owned + i, name, nil)
+			end
+		end
+		local total = 0
+		if profile then for _ in pairs(profile.Units) do total += 1 end end
+		unitsTab.Text = ("UNITS %d/%d"):format(total, Config.MaxUnitsOwned)
+		sortButton.Text = "SORT: " .. string.upper(sortMode)
+		filterButton.Text = "SHOW: " .. string.upper(filterMode)
 	end
-	for i, name in ipairs(Config.UnitOrder) do
-		if unitCount(name) == 0 then unitCard(#owned + i, name, nil) end
-	end
-	unitsTab.Text = ("UNITS %d/%d"):format(#owned, Config.MaxUnitsOwned)
 
-	clearGui(materialsScroll)
-	for i, key in ipairs(Config.MaterialOrder) do
-		local mat = Config.Materials[key]
-		local count = profile and profile.Items[key] or 0
-		local row = make("Frame", { LayoutOrder = i, Size = UDim2.new(1, 0, 0, 64), BackgroundColor3 = PANEL_LIGHT, BorderSizePixel = 0 }, materialsScroll)
-		make("UIStroke", { Color = PANEL_EDGE, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, row)
-		local icon = make("Frame", { Position = UDim2.fromOffset(12, 12), Size = UDim2.fromOffset(40, 40), BackgroundColor3 = mat.Color, BorderSizePixel = 0 }, row)
-		make("UIStroke", { Color = PANEL_EDGE, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, icon)
-		make("Frame", { Position = UDim2.fromOffset(4, 4), Size = UDim2.fromOffset(12, 6), BackgroundColor3 = mat.Color:Lerp(WHITE, 0.5), BorderSizePixel = 0 }, icon)
-		label(row, { Position = UDim2.fromOffset(66, 6), Size = UDim2.new(1, -200, 0, 28), Text = string.upper(mat.Name), TextSize = 22, TextXAlignment = Enum.TextXAlignment.Left })
-		label(row, { Position = UDim2.fromOffset(66, 34), Size = UDim2.new(1, -200, 0, 22), Text = mat.Desc, TextSize = 14, TextColor3 = TEXT_DIM, TextXAlignment = Enum.TextXAlignment.Left })
-		label(row, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0), Size = UDim2.fromOffset(120, 36), Text = "x" .. fmt(count), TextSize = 28, TextColor3 = GOLD, TextXAlignment = Enum.TextXAlignment.Right })
+	local function firstAbility(name)
+		for i, lv in ipairs(Config.Units[name].Levels) do
+			if lv.Ability then return i, lv.Ability end
+		end
+		return nil
 	end
+
+	local function refreshDetail()
+		local u = profile and selectedInvUid and profile.Units[selectedInvUid]
+		detailEmpty.Visible = not u
+		detailContent.Visible = u ~= nil
+		if not u then return end
+		local name = u.Name
+		local rarity = Config.RarityOf(name)
+		local maxLevel = Config.MaxUnitLevel(name)
+
+		detailPortrait:ClearAllChildren()
+		makePortrait(detailPortrait, name)
+		dName.Text = string.upper(name)
+		dName.TextColor3 = rarity.Color
+		dSub.Text = ("%s   LV %d/%d"):format(string.upper(Config.Units[name].Rarity or ""), u.Level, maxLevel)
+
+		if u.Level >= maxLevel then
+			xpFill.Size = UDim2.fromScale(1, 1)
+			xpText.Text = "MAX LEVEL"
+		else
+			local need = Config.XpToNext(u.Level)
+			xpFill.Size = UDim2.fromScale(math.clamp((u.XP or 0) / need, 0, 1), 1)
+			xpText.Text = ("%s / %s XP"):format(fmt(u.XP or 0), fmt(need))
+		end
+
+		local stats = Config.ScaledStats(name, 1, u.Level)
+		local nextStats = u.Level < maxLevel and Config.ScaledStats(name, 1, u.Level + 1)
+		dDamage.Text = "DAMAGE  " .. fmtNum(stats.Damage) .. (nextStats and ("  (next " .. fmtNum(nextStats.Damage) .. ")") or "")
+		dRange.Text = "RANGE   " .. fmtNum(stats.Range)
+		dSpeed.Text = "SPA     " .. spaText(stats.Cooldown)
+		local abilityLevel, ability = firstAbility(name)
+		dAbility.Text = ability and ("UP%d: %s"):format(abilityLevel, Config.DescribeAbility(ability)) or ""
+
+		local slot = loadoutSlotOf(u.Id)
+		if pickingSlotFor == u.Id then
+			dState.Text = "PICK A LOADOUT SLOT ABOVE"
+			dState.TextColor3 = GOLD
+		elseif slot then
+			dState.Text = "EQUIPPED IN SLOT " .. slot
+			dState.TextColor3 = GREEN
+		else
+			dState.Text = "NOT EQUIPPED"
+			dState.TextColor3 = TEXT_DIM
+		end
+		equipButton.Text = slot and "UNEQUIP" or (pickingSlotFor == u.Id and "CANCEL" or "EQUIP")
+		setButtonColor(equipButton, slot and RED_BTN or GREEN_BTN)
+
+		local essence = profile.Items.WispEssence or 0
+		local canFeed = essence > 0 and u.Level < maxLevel
+		setButtonColor(feed1Button, canFeed and BTN or GREY_BTN)
+		setButtonColor(feed10Button, canFeed and BTN or GREY_BTN)
+		dEssence.Text = ("WISP ESSENCE x%s  (+%d XP EACH)"):format(fmt(essence), Config.Leveling.XpPerEssence)
+
+		lockButton.Text = u.Locked and "UNLOCK" or "LOCK"
+		local sellable = not u.Locked and not slot
+		if os.clock() < sellConfirmUntil and sellable then
+			sellButtonInv.Text = "CONFIRM?"
+		else
+			sellButtonInv.Text = "SELL +" .. rarity.SellValue
+		end
+		setButtonColor(sellButtonInv, sellable and RED_BTN or GREY_BTN)
+	end
+
+	local function refreshMaterials()
+		clearGui(materialsScroll)
+		for i, key in ipairs(Config.MaterialOrder) do
+			local mat = Config.Materials[key]
+			local count = profile and profile.Items[key] or 0
+			local row = make("Frame", { LayoutOrder = i, Size = UDim2.new(1, 0, 0, 64), BackgroundColor3 = PANEL_LIGHT, BorderSizePixel = 0 }, materialsScroll)
+			make("UIStroke", { Color = PANEL_EDGE, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, row)
+			local icon = make("Frame", { Position = UDim2.fromOffset(12, 12), Size = UDim2.fromOffset(40, 40), BackgroundColor3 = mat.Color, BorderSizePixel = 0 }, row)
+			make("UIStroke", { Color = PANEL_EDGE, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, icon)
+			make("Frame", { Position = UDim2.fromOffset(4, 4), Size = UDim2.fromOffset(12, 6), BackgroundColor3 = mat.Color:Lerp(WHITE, 0.5), BorderSizePixel = 0 }, icon)
+			label(row, { Position = UDim2.fromOffset(66, 6), Size = UDim2.new(1, -200, 0, 28), Text = string.upper(mat.Name), TextSize = 22, TextXAlignment = Enum.TextXAlignment.Left })
+			label(row, { Position = UDim2.fromOffset(66, 34), Size = UDim2.new(1, -200, 0, 22), Text = mat.Desc, TextSize = 14, TextColor3 = TEXT_DIM, TextXAlignment = Enum.TextXAlignment.Left })
+			label(row, { AnchorPoint = Vector2.new(1, 0.5), Position = UDim2.new(1, -14, 0.5, 0), Size = UDim2.fromOffset(120, 36), Text = "x" .. fmt(count), TextSize = 28, TextColor3 = GOLD, TextXAlignment = Enum.TextXAlignment.Right })
+		end
+	end
+
+	refreshInventory = function()
+		unitsView.Visible = inventoryTab == "Units"
+		materialsView.Visible = inventoryTab == "Materials"
+		setButtonColor(unitsTab, inventoryTab == "Units" and GREEN_BTN or BTN)
+		setButtonColor(materialsTab, inventoryTab == "Materials" and GREEN_BTN or BTN)
+		gemsLabel.Text = "GEMS: " .. fmt(profile and profile.Gems or 0)
+		local canSummon = profile ~= nil and profile.Gems >= Config.Summon.Cost
+		setButtonColor(summonButton, canSummon and GREEN_BTN or GREY_BTN)
+		if selectedInvUid and not (profile and profile.Units[selectedInvUid]) then
+			selectedInvUid, pickingSlotFor = nil, nil -- sold
+		end
+		refreshLoadoutStrip()
+		refreshUnitGrid()
+		refreshDetail()
+		refreshMaterials()
+	end
+
+	-- ===== actions =====
+	for slot, s in pairs(slotButtons) do
+		s.Button.MouseButton1Click:Connect(function()
+			if pickingSlotFor then
+				local uid = pickingSlotFor
+				pickingSlotFor = nil
+				if invCall(Remote.EquipUnit, uid, slot) then invNotify("Equipped in slot " .. slot, GREEN) end
+				refreshInventory()
+			else
+				local u = slotUnit(slot)
+				if u then
+					selectedInvUid = u.Id
+					refreshInventory()
+				end
+			end
+		end)
+	end
+
+	equipButton.MouseButton1Click:Connect(function()
+		local u = profile and selectedInvUid and profile.Units[selectedInvUid]
+		if not u then return end
+		local slot = loadoutSlotOf(u.Id)
+		if slot then
+			if invCall(Remote.EquipUnit, "", slot) then invNotify("Removed from slot " .. slot) end
+		elseif pickingSlotFor == u.Id then
+			pickingSlotFor = nil
+			invNotify("")
+		elseif table.find(profile.Loadout, "") then
+			if invCall(Remote.EquipUnit, u.Id, nil) then invNotify(string.upper(u.Name) .. " equipped", GREEN) end
+		else
+			pickingSlotFor = u.Id
+			invNotify("Loadout full: click the slot to replace", GOLD)
+		end
+		refreshInventory()
+	end)
+
+	local function feed(amount)
+		local u = profile and selectedInvUid and profile.Units[selectedInvUid]
+		if not u then return end
+		local ok, used, gained = invCall(Remote.FeedUnit, u.Id, amount)
+		if ok then
+			invNotify(("Fed %d Wisp Essence%s"):format(used, (gained or 0) > 0 and ("  -  LEVEL UP! (+" .. gained .. ")") or ""), GREEN)
+		end
+	end
+	feed1Button.MouseButton1Click:Connect(function() feed(1) end)
+	feed10Button.MouseButton1Click:Connect(function() feed(10) end)
+
+	lockButton.MouseButton1Click:Connect(function()
+		local u = profile and selectedInvUid and profile.Units[selectedInvUid]
+		if u then invCall(Remote.LockUnit, u.Id, not u.Locked) end
+	end)
+
+	-- selling needs a second click within 3 seconds
+	sellButtonInv.MouseButton1Click:Connect(function()
+		local u = profile and selectedInvUid and profile.Units[selectedInvUid]
+		if not u then return end
+		if u.Locked or loadoutSlotOf(u.Id) then
+			invNotify(u.Locked and "Unlock this unit first" or "Unequip this unit first", RED)
+			return
+		end
+		if os.clock() < sellConfirmUntil then
+			sellConfirmUntil = 0
+			local ok, gems = invCall(Remote.SellUnits, { u.Id })
+			if ok then invNotify(("Sold %s for %d gems"):format(string.upper(u.Name), gems), GOLD) end
+		else
+			sellConfirmUntil = os.clock() + 3
+			refreshDetail()
+			task.delay(3.05, function()
+				if inventoryDim.Visible then refreshDetail() end
+			end)
+		end
+	end)
+
+	sortButton.MouseButton1Click:Connect(function()
+		local i = table.find(SORT_MODES, sortMode) or 1
+		sortMode = SORT_MODES[i % #SORT_MODES + 1]
+		refreshInventory()
+	end)
+	filterButton.MouseButton1Click:Connect(function()
+		local modes = { "All" }
+		for _, r in ipairs(Config.RarityOrder) do table.insert(modes, r) end
+		local i = table.find(modes, filterMode) or 1
+		filterMode = modes[i % #modes + 1]
+		refreshInventory()
+	end)
+
+	local function openInventory()
+		invNotify("")
+		pickingSlotFor = nil
+		inventoryDim.Visible = true
+		fitInventory()
+		refreshInventory()
+	end
+	local function closeInventory()
+		inventoryDim.Visible = false
+		pickingSlotFor = nil
+	end
+	inventoryButton.MouseButton1Click:Connect(openInventory)
+	inventoryClose.MouseButton1Click:Connect(closeInventory)
+	inventoryDim.MouseButton1Click:Connect(closeInventory)
+	unitsTab.MouseButton1Click:Connect(function() inventoryTab = "Units"; refreshInventory() end)
+	materialsTab.MouseButton1Click:Connect(function() inventoryTab = "Materials"; refreshInventory() end)
+
+	local summoning = false
+	summonButton.MouseButton1Click:Connect(function()
+		if summoning then return end
+		summoning = true
+		local ok, result = Remote.Summon:InvokeServer()
+		summoning = false
+		if ok and typeof(result) == "table" then
+			selectedInvUid = result.UnitId
+			invNotify(("Summoned %s %s!  %s"):format(string.upper(result.Rarity or ""), string.upper(result.Unit), result.New and "NEW UNIT" or "ADDED AS A NEW CARD"), Config.RarityOf(result.Unit).Color)
+		else
+			invNotify(tostring(result or "Summon failed"), RED)
+		end
+	end)
+
+	return inventoryDim, refreshInventory, closeInventory
 end
-
-local function openInventory()
-	summonResult.Text = ""
-	inventoryDim.Visible = true
-	refreshInventory()
-end
-local function closeInventory()
-	inventoryDim.Visible = false
-end
-inventoryButton.MouseButton1Click:Connect(openInventory)
-inventoryClose.MouseButton1Click:Connect(closeInventory)
-inventoryDim.MouseButton1Click:Connect(closeInventory)
-unitsTab.MouseButton1Click:Connect(function() inventoryTab = "Units"; refreshInventory() end)
-materialsTab.MouseButton1Click:Connect(function() inventoryTab = "Materials"; refreshInventory() end)
-
-local summoning = false
-summonButton.MouseButton1Click:Connect(function()
-	if summoning then return end
-	summoning = true
-	local ok, result = summonRemote:InvokeServer()
-	summoning = false
-	if ok and typeof(result) == "table" then
-		summonResult.TextColor3 = Config.RarityOf(result.Unit).Color
-		summonResult.Text = ("Summoned %s %s!  %s"):format(string.upper(result.Rarity or ""), string.upper(result.Unit), result.New and "NEW UNIT" or "ADDED AS A NEW CARD")
-	else
-		summonResult.TextColor3 = RED
-		summonResult.Text = tostring(result or "Summon failed")
-	end
-end)
+local inventoryDim, refreshInventory, closeInventory = buildInventory()
 
 -- saved data from the server
 local function applyProfile(p)
@@ -1372,16 +1837,16 @@ local function applyProfile(p)
 		WorldView.setAlwaysHealthBars(alwaysHealthBars)
 		refreshHealthBarsButton()
 	end
-	refreshCards()
+	rebuildShop()
 	if inventoryDim.Visible then refreshInventory() end
 end
-profileUpdatedRemote.OnClientEvent:Connect(applyProfile)
+Remote.ProfileUpdated.OnClientEvent:Connect(applyProfile)
 task.spawn(function()
-	local p = getProfileRemote:InvokeServer()
+	local p = Remote.GetProfile:InvokeServer()
 	if p then applyProfile(p) end
 end)
 
-stageRewardsRemote.OnClientEvent:Connect(function(rewards)
+Remote.StageRewards.OnClientEvent:Connect(function(rewards)
 	lastRewards = rewards
 	if overlay.Visible then rewardsLabel.Text = rewardsText(rewards) end
 end)
@@ -1428,28 +1893,28 @@ end)
 refreshHostButtons()
 
 playButton.MouseButton1Click:Connect(function()
-	if isHost() then startGameRemote:FireServer() end
+	if isHost() then Remote.StartGame:FireServer() end
 end)
 retryButton.MouseButton1Click:Connect(function()
-	if isHost() then retryRemote:FireServer() end
+	if isHost() then Remote.Retry:FireServer() end
 end)
 menuButton.MouseButton1Click:Connect(function()
-	if isHost() then returnToMenuRemote:FireServer() end
+	if isHost() then Remote.ReturnToMenu:FireServer() end
 end)
 speedButton.MouseButton1Click:Connect(function()
 	if not isHost() then notify(HOST_ONLY) return end
 	local speed = workspace:GetAttribute("GameSpeed") or 1
 	local options = Config.SpeedOptions
 	local idx = table.find(options, speed) or 1
-	setSpeedRemote:FireServer(options[idx % #options + 1])
+	Remote.SetSpeed:FireServer(options[idx % #options + 1])
 end)
 autoSkipButton.MouseButton1Click:Connect(function()
 	if not isHost() then notify(HOST_ONLY) return end
-	setAutoSkipRemote:FireServer(not workspace:GetAttribute("AutoSkip"))
+	Remote.SetAutoSkip:FireServer(not workspace:GetAttribute("AutoSkip"))
 end)
 startMatchButton.MouseButton1Click:Connect(function()
 	if not isHost() then notify(HOST_ONLY) return end
-	beginMatchRemote:FireServer()
+	Remote.BeginMatch:FireServer()
 end)
 
 -- the placement preview follows the mouse
@@ -1487,7 +1952,7 @@ UserInputService.InputBegan:Connect(function(input, processed)
 			if placing then return end
 			placing = true
 			local ok, success, reason = pcall(function()
-				return placeTowerRemote:InvokeServer(bestUnitId(selectedUnit), pos)
+				return Remote.PlaceTower:InvokeServer(selectedUid, pos)
 			end)
 			placing = false
 			if ok and success then
@@ -1508,9 +1973,9 @@ UserInputService.InputBegan:Connect(function(input, processed)
 		elseif input.KeyCode == Enum.KeyCode.U then
 			tryUpgrade()
 		else
-			-- 1-6 pick the unit with that [number] in the shop
+			-- 1-6 pick the unit in that loadout slot ([number] on the shop card)
 			local slot = table.find(UNIT_KEYS, input.KeyCode)
-			if slot and Config.UnitOrder[slot] then selectUnit(Config.UnitOrder[slot]) end
+			if slot then selectUnit(slot) end
 		end
 	end
 end)
