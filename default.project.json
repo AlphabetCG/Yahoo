@@ -97,6 +97,7 @@
           "BinaryString": ""
         },
         "SignalBehavior": "Deferred",
+        "StreamingEnabled": false,
         "StreamOutBehavior": "Opportunistic",
         "StreamingIntegrityMode": "PauseOutsideLoadedArea",
         "WorldPivotData": {

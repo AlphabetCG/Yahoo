@@ -150,9 +150,17 @@ if not enemiesFolder then
 	enemiesFolder.Parent = workspace
 end
 
+-- The game draws everything on the client from parts it must be able to see (waypoints, units,
+-- enemies) and players have no character, so Workspace.StreamingEnabled has to be off
+-- (default.project.json sets it). New places in Studio start with it on.
+if workspace.StreamingEnabled then
+	warn("GameServer: Workspace.StreamingEnabled is ON in this place. Turn it off (Rojo sync / Workspace properties), "
+		.. "otherwise clients don't see the path, units or enemies.")
+end
+
 local path = Config.GetPath()
 if #path < 2 then
-	warn("GameServer: Workspace.Waypoints needs at least 2 parts named 1, 2, 3...")
+	warn("GameServer: Workspace.Waypoints needs at least 2 parts named 1, 2, 3... (is this place synced with Rojo?)")
 end
 
 -- ===== Game state (shared with clients through attributes on Workspace) =====
@@ -1069,7 +1077,11 @@ returnToMenuRemote.OnServerEvent:Connect(function(player)
 	if IS_MATCH_PLACE then
 		-- anyone can go back to the lobby once the stage is over
 		if RateLimit.allow(player, "ReturnToMenu", 1) and (state == "GameOver" or state == "Victory") then
-			sendToLobby({ player })
+			if returnPlaceId and not RunService:IsStudio() then
+				sendToLobby({ player })
+			elseif isHost(player) then
+				goToMenu() -- Studio / opened directly: no lobby to go to, the stage starts again
+			end
 		end
 		return
 	end
