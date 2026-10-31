@@ -1941,9 +1941,27 @@ Remote.StageRewards.OnClientEvent:Connect(function(rewards)
 	if overlay.Visible then rewardsLabel.Text = rewardsText(rewards) end
 end)
 
+-- Match place: there is no main menu. Until the stage starts, show a waiting screen.
+local IS_MATCH_PLACE = Config.Places.Match ~= 0 and game.PlaceId == Config.Places.Match
+local function buildWaitingScreen()
+	local gui = make("ScreenGui", { Name = "TDWaitingGui", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 3, Enabled = false }, playerGui)
+	local back = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = rgb(20, 22, 34), BorderSizePixel = 0 }, gui)
+	label(back, {
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.45), Size = UDim2.fromOffset(700, 60),
+		Text = "GETTING READY...", TextSize = 40, TextColor3 = GOLD,
+	})
+	label(back, {
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.55), Size = UDim2.fromOffset(700, 30),
+		Text = "Waiting for the rest of your lobby", TextSize = 20, TextColor3 = TEXT_DIM,
+	})
+	return gui
+end
+local waitingGui = buildWaitingScreen()
+
 local function refreshState()
 	local state = currentState()
-	menuGui.Enabled = state == "Menu"
+	menuGui.Enabled = state == "Menu" and not IS_MATCH_PLACE
+	waitingGui.Enabled = state == "Menu" and IS_MATCH_PLACE
 	hudGui.Enabled = state ~= "Menu"
 	if state ~= "Menu" then closeInventory() end
 	playMenu.onState(state)
@@ -1971,7 +1989,11 @@ local function refreshHostButtons()
 	local host = isHost()
 	retryButton.Text = host and "RETRY" or "WAITING..."
 	setButtonColor(retryButton, host and GREEN_BTN or GREY_BTN)
-	menuButton.Text = host and "MAIN MENU" or "HOST DECIDES"
+	if IS_MATCH_PLACE then
+		menuButton.Text = "BACK TO LOBBY" -- anyone can leave once the stage is over
+	else
+		menuButton.Text = host and "MAIN MENU" or "HOST DECIDES"
+	end
 	startMatchButton.Text = host and "START MATCH" or "HOST STARTS"
 	setButtonColor(startMatchButton, host and GREEN_BTN or GREY_BTN)
 end
@@ -1988,7 +2010,7 @@ retryButton.MouseButton1Click:Connect(function()
 	if isHost() then Remote.Retry:FireServer() end
 end)
 menuButton.MouseButton1Click:Connect(function()
-	if isHost() then Remote.ReturnToMenu:FireServer() end
+	if IS_MATCH_PLACE or isHost() then Remote.ReturnToMenu:FireServer() end
 end)
 -- speed: the host sets it. auto skip: change MY choice (the match goes with the majority)
 speedButton.MouseButton1Click:Connect(function()

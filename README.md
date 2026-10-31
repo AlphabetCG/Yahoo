@@ -129,6 +129,25 @@ Other state lives on other objects:
 
 ---
 
+## Two places: Lobby and Match
+
+The experience has two places, and **both run the same project** (`default.project.json`); the scripts check `game.PlaceId` to know where they are.
+
+| Place | PlaceId | What runs there |
+|---|---|---|
+| **Lobby** (start place) | the start place | Main menu, inventory, summon, PLAY flow and lobby rooms. START teleports the room to its own reserved Match server |
+| **Match** ("2nd place") | `Config.Places.Match` = 138398273175866 | No menu: waits for the room's players (max 20 s), plays the stage from the TeleportData, then **BACK TO LOBBY** sends each player back |
+
+**Publishing a change:**
+1. Open the **Lobby** place in Studio, connect Rojo, then **File → Publish to Roblox**.
+2. Open the **Match** place (Asset Manager → Places → 2nd place), connect Rojo to the same project, then **Publish** again.
+3. Test teleports in the live game (or a private server): Studio can't teleport.
+
+**In Studio:**
+- **Lobby place:** a lobby room's START plays the stage in the same server, so the whole flow can be tested.
+- **Match place opened directly:** it starts Story Stage 1 with everyone who joined within 3 s.
+- **No teleports at all:** set `Config.Places.Match = 0` to play every stage inside the lobby server.
+
 ## Tweaking the game
 
 Nearly everything is in [Config.luau](src/ReplicatedStorage/Config.luau):
@@ -151,6 +170,6 @@ Nearly everything is in [Config.luau](src/ReplicatedStorage/Config.luau):
 
 These are all covered in the spec:
 
-- **Lobby and match share a place.** Splitting them into separate places with teleports (#19) needs a second place in the universe.
+- **Teleports only work in the published game.** In Studio a lobby room plays its stage inside the same server.
 - **Little content.** There are five units, one enemy type plus the boss, and one map.
 - **x3 speed is free.** It is planned as a gamepass perk.

@@ -4,8 +4,16 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Debris = game:GetService("Debris")
+local TeleportService = game:GetService("TeleportService")
 
 local Config = require(ReplicatedStorage:WaitForChild("Config"))
+
+-- Which place is this? The same scripts run in the Lobby (start place) and the Match place.
+--   Lobby: lobby rooms teleport to a reserved Match server (outside Studio, when Config.Places.Match is set).
+--   Match: plays the stage it was sent (TeleportData), then sends players back to the Lobby.
+local IS_MATCH_PLACE = Config.Places.Match ~= 0 and game.PlaceId == Config.Places.Match
+local USE_TELEPORT = Config.Places.Match ~= 0 and not IS_MATCH_PLACE and not RunService:IsStudio()
+workspace:SetAttribute("IsMatchPlace", IS_MATCH_PLACE)
 
 -- No walking characters in a tower defense game
 Players.CharacterAutoLoads = false
@@ -967,8 +975,60 @@ local function startGame(stageId, members, host)
 end
 
 -- ===== Lobby rooms start stages =====
--- For now every stage runs inside this server (one at a time). Teleporting rooms to the Match place
--- (Config.Places.Match) comes next.
+-- Live game: the room is teleported to its own reserved Match server (TeleportData tells that server
+-- the stage, the host and the members). Studio / Config.Places.Match = 0: the stage runs in this server.
+local teleportRetries = {} -- [player] = { Options = TeleportOptions, Tries = n }
+
+local function teleportRoom(room)
+	local members = table.clone(room.Members)
+	local userIds = {}
+	for _, p in ipairs(members) do table.insert(userIds, p.UserId) end
+	local options = Instance.new("TeleportOptions")
+	options.ShouldReserveServer = true
+	options:SetTeleportData({
+		StageId = room.StageId,
+		HostId = room.Host.UserId,
+		Members = userIds,
+		ReturnPlaceId = game.PlaceId,
+	})
+	Lobby.SetStarted(room, true)
+	local ok, result = pcall(function()
+		return TeleportService:TeleportAsync(Config.Places.Match, members, options)
+	end)
+	if not ok then
+		Lobby.SetStarted(room, false)
+		warn("GameServer: teleport to the Match place failed: " .. tostring(result))
+		return false, "Couldn't start the stage, try again"
+	end
+	-- if one player's teleport fails, retry them into the same reserved server
+	local retryOptions = Instance.new("TeleportOptions")
+	retryOptions.ReservedServerAccessCode = result.ReservedServerAccessCode
+	retryOptions:SetTeleportData(options:GetTeleportData())
+	for _, p in ipairs(members) do
+		teleportRetries[p] = { Options = retryOptions, Tries = 0 }
+	end
+	return true, "Starting..."
+end
+
+TeleportService.TeleportInitFailed:Connect(function(player, result, errorMessage)
+	local retry = teleportRetries[player]
+	warn(("GameServer: teleport failed for %s (%s): %s"):format(player.Name, tostring(result), tostring(errorMessage)))
+	if not retry or retry.Tries >= 3 then
+		teleportRetries[player] = nil
+		local room = Lobby.RoomOf(player)
+		if room then Lobby.SetStarted(room, false) end -- they stay in their lobby room and can try again
+		return
+	end
+	retry.Tries += 1
+	task.wait(2 * retry.Tries)
+	pcall(function()
+		TeleportService:TeleportAsync(Config.Places.Match, { player }, retry.Options)
+	end)
+end)
+Players.PlayerRemoving:Connect(function(player)
+	teleportRetries[player] = nil
+end)
+
 Lobby.init(remotes, {
 	CanCreate = function(player, stageId)
 		local required = Config.StageRequirement(stageId)
@@ -978,6 +1038,10 @@ Lobby.init(remotes, {
 		return true
 	end,
 	StartRoom = function(room)
+		if USE_TELEPORT then
+			return teleportRoom(room)
+		end
+		-- Studio / no Match place: play the stage in this server
 		if workspace:GetAttribute("State") ~= "Menu" then
 			return false, "A stage is already running in this server"
 		end
@@ -988,9 +1052,28 @@ Lobby.init(remotes, {
 	end,
 })
 
+local returnPlaceId = nil -- Match place: the Lobby place the players came from (from TeleportData)
+
+-- Match place: sends players back to the Lobby (each player chooses when)
+local function sendToLobby(players)
+	if not returnPlaceId or RunService:IsStudio() then return false end
+	local ok, err = pcall(function()
+		TeleportService:TeleportAsync(returnPlaceId, players)
+	end)
+	if not ok then warn("GameServer: teleport back to the lobby failed: " .. tostring(err)) end
+	return ok
+end
+
 returnToMenuRemote.OnServerEvent:Connect(function(player)
-	if not hostRequest(player, "ReturnToMenu") then return end
 	local state = workspace:GetAttribute("State")
+	if IS_MATCH_PLACE then
+		-- anyone can go back to the lobby once the stage is over
+		if RateLimit.allow(player, "ReturnToMenu", 1) and (state == "GameOver" or state == "Victory") then
+			sendToLobby({ player })
+		end
+		return
+	end
+	if not hostRequest(player, "ReturnToMenu") then return end
 	if state == "GameOver" or state == "Victory" then
 		goToMenu()
 	end
@@ -1112,6 +1195,55 @@ end)
 
 workspace:SetAttribute("AutoSkip", Config.AutoSkipDefault)
 recomputeVotes()
+
+-- ===== Match place: play the stage the lobby sent =====
+-- The first player to arrive carries the TeleportData (stage, host, members, lobby place). The stage
+-- starts once every member is here, or after MATCH_WAIT seconds with whoever made it.
+-- Opened directly (Studio, no TeleportData): Story stage 1 with everyone who joined within a few seconds.
+if IS_MATCH_PLACE then
+	local MATCH_WAIT = 20
+	local STUDIO_WAIT = 3
+	local info = nil
+	local firstJoin = 0
+
+	local function tryStart()
+		if not info or workspace:GetAttribute("State") ~= "Menu" then return end
+		local present = {}
+		for _, userId in ipairs(info.Members) do
+			local p = Players:GetPlayerByUserId(userId)
+			if p then table.insert(present, p) end
+		end
+		local waited = os.clock() - firstJoin
+		if #present == 0 then return end
+		if info.Direct and waited < STUDIO_WAIT then return end
+		if not info.Direct and #present < #info.Members and waited < MATCH_WAIT then return end
+		local host = Players:GetPlayerByUserId(info.HostId) or present[1]
+		startGame(info.StageId, present, host)
+	end
+
+	Players.PlayerAdded:Connect(function(player)
+		if not info then
+			local data = player:GetJoinData().TeleportData
+			if typeof(data) == "table" and Config.Stages[data.StageId] and typeof(data.Members) == "table" then
+				info = { StageId = data.StageId, HostId = data.HostId, Members = data.Members }
+				returnPlaceId = typeof(data.ReturnPlaceId) == "number" and data.ReturnPlaceId or nil
+			else
+				info = { StageId = Config.DefaultStage, HostId = player.UserId, Members = {}, Direct = true }
+			end
+			firstJoin = os.clock()
+		end
+		if info.Direct and workspace:GetAttribute("State") == "Menu" and not table.find(info.Members, player.UserId) then
+			table.insert(info.Members, player.UserId)
+		end
+		tryStart()
+	end)
+	task.spawn(function()
+		while true do
+			task.wait(1)
+			tryStart()
+		end
+	end)
+end
 
 -- ===== Main loop =====
 RunService.Heartbeat:Connect(function(dt)
