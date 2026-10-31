@@ -129,14 +129,14 @@ end
 
 -- ===== Rarity =====
 -- Every unit in Config.Units needs a Rarity from this list.
---   Order = sort order (higher = rarer), MaxLevel = account level cap, SellValue = gems when sold
+--   Order = sort order (higher = rarer), MaxLevel = account level cap, SellGold = Gold paid when a copy is sold
 Config.RarityOrder = { "Rare", "Epic", "Legendary", "Mythic", "Secret" }
 Config.Rarities = {
-	Rare = { Color = Color3.fromRGB(80, 160, 255), Order = 1, MaxLevel = 30, SellValue = 5 },
-	Epic = { Color = Color3.fromRGB(180, 90, 255), Order = 2, MaxLevel = 40, SellValue = 15 },
-	Legendary = { Color = Color3.fromRGB(255, 196, 40), Order = 3, MaxLevel = 50, SellValue = 40 },
-	Mythic = { Color = Color3.fromRGB(255, 70, 110), Order = 4, MaxLevel = 60, SellValue = 100 },
-	Secret = { Color = Color3.fromRGB(30, 30, 30), Order = 5, MaxLevel = 60, SellValue = 250 },
+	Rare = { Color = Color3.fromRGB(80, 160, 255), Order = 1, MaxLevel = 30, SellGold = 5 },
+	Epic = { Color = Color3.fromRGB(180, 90, 255), Order = 2, MaxLevel = 40, SellGold = 15 },
+	Legendary = { Color = Color3.fromRGB(255, 196, 40), Order = 3, MaxLevel = 50, SellGold = 40 },
+	Mythic = { Color = Color3.fromRGB(255, 70, 110), Order = 4, MaxLevel = 60, SellGold = 100 },
+	Secret = { Color = Color3.fromRGB(30, 30, 30), Order = 5, MaxLevel = 60, SellGold = 250 },
 }
 
 function Config.RarityOf(unitName)
@@ -241,6 +241,9 @@ Config.MaterialOrder = { "WispEssence", "VoidCrystal" }
 -- every new player starts with these units: { UnitName = copies }
 Config.StarterUnits = { Herobrine = 1 }
 Config.StarterGems = 300
+-- Gold: earned by selling units (Config.Rarities[r].SellGold). Never sold for Robux.
+-- What it can be spent on is still being decided (issue #50).
+Config.GoldColor = Color3.fromRGB(255, 196, 60)
 Config.MaxUnitsOwned = 150   -- unit storage; summons are refused once it is full
 Config.LoadoutSlots = 6      -- equipped units: only these show up in the in-match shop (keys 1-6)
 -- Studio play tests only: every player gets one copy of each of these units if they don't own one yet

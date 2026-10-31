@@ -4,6 +4,7 @@
 -- Profile layout (Version 2, saved as one table under "Player_<UserId>"):
 --   Settings  = { AlwaysHealthBars = bool, AutoSkip = bool }
 --   Gems      = number
+--   Gold      = number                             (earned by selling units)
 --   Units     = { [uid] = { Id, Name, Level, XP, Trait, Locked, Obtained } }   (one entry per owned unit)
 --   Loadout   = { uid or "", ... }                   (Config.LoadoutSlots entries; "" = empty slot)
 --   Items     = { [itemKey] = amount }              (keys come from Config.Materials)
@@ -205,6 +206,7 @@ local function defaultProfile()
 		Version = PROFILE_VERSION,
 		Settings = { AlwaysHealthBars = false, AutoSkip = Config.AutoSkipDefault },
 		Gems = Config.StarterGems,
+		Gold = 0,
 		Units = units,
 		Loadout = {}, -- filled by normalizeLoadout / fillLoadout when the profile loads
 		Items = {},
@@ -213,7 +215,7 @@ local function defaultProfile()
 		Codes = {},
 		Purchases = {},
 		Flags = { StarterPack = false },
-		Stats = { StagesCleared = 0, BossesKilled = 0, Kills = 0, Summons = 0, RobuxSpent = 0, FirstJoin = os.time() },
+		Stats = { StagesCleared = 0, BossesKilled = 0, Kills = 0, Summons = 0, RobuxSpent = 0, GoldEarned = 0, FirstJoin = os.time() },
 	}
 end
 
@@ -473,6 +475,15 @@ local function touch(player)
 	replicate(player)
 end
 
+function PlayerData.AddGold(player, amount)
+	local profile = profiles[player]
+	if not profile or typeof(amount) ~= "number" then return false end
+	profile.Gold = math.max(0, profile.Gold + math.floor(amount))
+	if amount > 0 then profile.Stats.GoldEarned += math.floor(amount) end
+	touch(player)
+	return true
+end
+
 function PlayerData.AddGems(player, amount)
 	local profile = profiles[player]
 	if not profile or typeof(amount) ~= "number" then return false end
@@ -629,28 +640,29 @@ function PlayerData.SetLocked(player, uid, locked)
 	return true
 end
 
--- Sells unit copies for gems (Config.Rarities[r].SellValue). Locked and equipped units are skipped.
--- Returns true, gems earned, units sold.
+-- Sells unit copies for Gold (Config.Rarities[r].SellGold). Locked and equipped units are skipped.
+-- Returns true, gold earned, units sold.
 function PlayerData.SellUnits(player, uids)
 	local profile = profiles[player]
 	if not profile then return false, "Your data is still loading" end
 	if busy() then return false, "You can't sell units during a stage" end
 	if typeof(uids) ~= "table" or #uids == 0 or #uids > Config.MaxUnitsOwned then return false, "Bad request" end
 	local owned = countUnits(profile.Units, "")
-	local gems, sold = 0, 0
+	local gold, sold = 0, 0
 	for _, uid in ipairs(uids) do
 		local unit = typeof(uid) == "string" and profile.Units[uid]
 		if unit and not unit.Locked and not loadoutSlotOf(profile, uid) and owned - sold > 1 then
 			profile.Units[uid] = nil
-			gems += Config.RarityOf(unit.Name).SellValue
+			gold += Config.RarityOf(unit.Name).SellGold
 			sold += 1
 		end
 	end
 	if sold == 0 then return false, "Nothing to sell (locked, equipped, or your last unit)" end
-	profile.Gems += gems
+	profile.Gold += gold
+	profile.Stats.GoldEarned += gold
 	touch(player)
 	saveSoon(player)
-	return true, gems, sold
+	return true, gold, sold
 end
 
 -- Feeds up to `amount` Wisp Essence to a unit (never more than it needs to reach its level cap).
