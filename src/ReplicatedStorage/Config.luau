@@ -358,10 +358,11 @@ Config.Tiers = {
 --   Lives = multiplier on the lives it costs when it reaches the castle,
 --   Shield = share of its max HP as a shield that must be broken first (shield damage pays no money),
 --   Flying = only units with CanHitAir can hit it; it flies over the line (doesn't queue, nobody queues
---   behind it). Sprite = which PixelArt sprite is drawn.
+--   behind it). Overtakes = walks the path but passes other enemies (no queueing, nobody queues behind it).
+--   Sprite = which PixelArt sprite is drawn.
 Config.EnemyTypes = {
 	Wisp = { Name = "Wisp", Sprite = "Wisp", Health = 1, Speed = 1 },
-	Runner = { Name = "Runner", Sprite = "Runner", Health = 0.5, Speed = 1.7, Size = 0.8 },
+	Runner = { Name = "Runner", Sprite = "Runner", Health = 0.5, Speed = 1.7, Size = 0.8, Overtakes = true },
 	Tank = { Name = "Tank", Sprite = "Tank", Health = 3, Speed = 0.6, Size = 1.3, Lives = 2 },
 	Shielded = { Name = "Shielded", Sprite = "Wisp", Health = 1, Speed = 0.9, Shield = 0.5 },
 	Flying = { Name = "Flyer", Sprite = "Flyer", Health = 0.8, Speed = 1.2, Flying = true },

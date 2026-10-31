@@ -460,6 +460,8 @@ local function spawnEnemy(tier, isBoss, round, bossHealth, typeName)
 		Type = typeName,
 		Shield = shield,          -- must be broken before health goes down
 		Flying = def.Flying == true,
+		-- not in the single-file line: flyers go over it, runners overtake (Config.EnemyTypes.Overtakes)
+		Passes = def.Flying == true or def.Overtakes == true,
 		Lives = def.Lives or 1,   -- lives multiplier when it reaches the castle
 		Pending = 0,
 		Born = os.clock(),
@@ -561,8 +563,8 @@ local function updateEnemies(dt)
 		local speed = e.Speed
 		if (e.SlowUntil or 0) > gameTime then speed *= 1 - e.SlowPct end
 		local step = speed * dt
-		-- single file for walkers; flyers go over the line (they neither wait nor block)
-		if ahead and not e.Flying then
+		-- single file for walkers; flyers and runners pass the line (they neither wait nor block)
+		if ahead and not e.Passes then
 			step = math.min(step, math.max(0, ahead.Dist - (ahead.Radius + e.Radius) - e.Dist))
 		end
 		while step > 0 and e.Index < #path do
@@ -589,7 +591,7 @@ local function updateEnemies(dt)
 			e.Part:Destroy()
 			loseLives(e.Boss and math.ceil(e.Health - 1e-6) or e.ShownTier * (e.Lives or 1))
 			if workspace:GetAttribute("State") ~= "Playing" then return end
-		elseif not e.Flying then
+		elseif not e.Passes then
 			ahead = e
 		end
 	end
