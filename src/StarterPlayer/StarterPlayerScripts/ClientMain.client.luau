@@ -62,6 +62,7 @@ for _, name in ipairs({
 	"SetSetting",
 	"Summon",
 	"StageRewards",
+	"SkipWave",
 	"EquipUnit",
 	"LockUnit",
 	"SellUnits",
@@ -455,6 +456,73 @@ local menuCurrency = label(menu, {
 	Text = "",
 })
 
+-- Party panel (main menu): who plays the next stage together. Built in a function to keep the main
+-- chunk under Luau's 200-local limit.
+local function buildPartyPanel()
+	local MAX = Config.MaxPartySize
+	local panel = pixelPanel(menu, {
+		AnchorPoint = Vector2.new(1, 0.5),
+		Position = UDim2.new(1, -24, 0.56, 0),
+		Size = UDim2.fromOffset(260, 80 + MAX * 36),
+	})
+	local title = label(panel, { Position = UDim2.fromOffset(0, 8), Size = UDim2.new(1, 0, 0, 30), TextSize = 22, TextColor3 = GOLD, Text = "PARTY" })
+	local rows = make("Frame", { Position = UDim2.fromOffset(12, 44), Size = UDim2.new(1, -24, 0, MAX * 36), BackgroundTransparency = 1 }, panel)
+	make("UIListLayout", { Padding = UDim.new(0, 4), SortOrder = Enum.SortOrder.LayoutOrder }, rows)
+	local note = label(panel, { Position = UDim2.new(0, 0, 1, -30), Size = UDim2.new(1, 0, 0, 22), TextSize = 13, TextColor3 = TEXT_DIM, TextWrapped = true, Text = "" })
+
+	local function refresh()
+		for _, c in ipairs(rows:GetChildren()) do
+			if c:IsA("Frame") then c:Destroy() end
+		end
+		local hostId = workspace:GetAttribute("HostId")
+		local list = Players:GetPlayers()
+		table.sort(list, function(a, b)
+			if (a.UserId == hostId) ~= (b.UserId == hostId) then return a.UserId == hostId end
+			return a.Name < b.Name
+		end)
+		for i = 1, MAX do
+			local p = list[i]
+			local row = make("Frame", {
+				LayoutOrder = i,
+				Size = UDim2.new(1, 0, 0, 32),
+				BackgroundColor3 = (p == player) and PANEL_LIGHT or rgb(24, 28, 44),
+				BorderSizePixel = 0,
+			}, rows)
+			label(row, {
+				Position = UDim2.fromOffset(10, 0),
+				Size = UDim2.new(1, -80, 1, 0),
+				Text = p and p.DisplayName or "- empty -",
+				TextSize = 16,
+				TextColor3 = p and WHITE or TEXT_DIM,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				TextTruncate = Enum.TextTruncate.AtEnd,
+			})
+			if p then
+				label(row, {
+					AnchorPoint = Vector2.new(1, 0),
+					Position = UDim2.new(1, -8, 0, 0),
+					Size = UDim2.fromOffset(70, 32),
+					Text = (p.UserId == hostId and "HOST" or "") .. (p == player and (p.UserId == hostId and " YOU" or "YOU") or ""),
+					TextSize = 13,
+					TextColor3 = GOLD,
+					TextXAlignment = Enum.TextXAlignment.Right,
+				})
+			end
+		end
+		title.Text = ("PARTY  %d/%d"):format(math.min(#list, MAX), MAX)
+		if #list > MAX then
+			note.Text = ("%d more in the server will spectate"):format(#list - MAX)
+		else
+			note.Text = isHost() and "You are the host: press PLAY" or "The host starts the stage"
+		end
+	end
+	Players.PlayerAdded:Connect(refresh)
+	Players.PlayerRemoving:Connect(function() task.defer(refresh) end)
+	workspace:GetAttributeChangedSignal("HostId"):Connect(refresh)
+	refresh()
+end
+buildPartyPanel()
+
 -- =====================================================================
 --  HUD (respects the Roblox top bar so nothing is hidden under it)
 -- =====================================================================
@@ -528,6 +596,9 @@ local countdownPlate = pixelPanel(hudGui, {
 	Visible = false,
 })
 local countdownLabel = label(countdownPlate, { Size = UDim2.fromScale(1, 1), TextSize = 20, TextColor3 = GOLD, Text = "" })
+-- SKIP: vote to start the next round now (everyone in the match has to agree)
+local skipWaveButton = pixelButton(hudGui, "SKIP", UDim2.fromOffset(110, 34), UDim2.new(0.5, -SHOP_W / 2 + 214, 0, 81), 18)
+skipWaveButton.Visible = false
 
 -- prep phase: countdown + START MATCH button
 local prepPanel = pixelPanel(hudGui, {
@@ -857,7 +928,10 @@ towersFolder.ChildRemoved:Connect(function() refreshCards() end)
 
 local function updateHint()
 	local prep = currentState() == "Playing" and workspace:GetAttribute("Phase") == "Prep"
-	if selectedUnit then
+	if currentState() == "Playing" and not player:GetAttribute("InMatch") then
+		hint.Text = "SPECTATING  -  you join the match at the next round"
+		hint.Visible = true
+	elseif selectedUnit then
 		hint.Text = "Click to place   -   Right-click or Q to cancel"
 		hint.Visible = true
 	elseif prep then
@@ -1220,7 +1294,11 @@ gearButton.MouseButton1Click:Connect(function()
 end)
 resumeButton.MouseButton1Click:Connect(closeSettings)
 surrenderButton.MouseButton1Click:Connect(function()
-	if not isHost() then return end
+	if not player:GetAttribute("InMatch") then return end
+	if player:GetAttribute("VoteSurrender") then
+		Remote.Surrender:FireServer() -- take the vote back
+		return
+	end
 	mainView.Visible = false
 	confirmView.Visible = true
 end)
@@ -1264,12 +1342,37 @@ local function refreshHud()
 	else
 		countdownLabel.Text = "NEXT ROUND IN " .. cd
 	end
+	-- votes: with more than one player the buttons show how many agree ("2/3")
+	local voters = workspace:GetAttribute("Voters") or 1
+	local multi = voters > 1
+	local inMatch = player:GetAttribute("InMatch") == true
 	local speed = workspace:GetAttribute("GameSpeed") or 1
-	speedButton.Text = "SPEED  X" .. speed
+	speedButton.Text = multi and ("SPEED X%d  %d/%d"):format(speed, workspace:GetAttribute("SpeedVotes") or 0, voters) or ("SPEED  X" .. speed)
+	speedButton.TextSize = multi and 19 or 24
 	setButtonColor(speedButton, SPEED_COLORS[speed] or BTN)
 	local auto = workspace:GetAttribute("AutoSkip")
-	autoSkipButton.Text = auto and "AUTO SKIP: ON" or "AUTO SKIP: OFF"
+	autoSkipButton.Text = (auto and "AUTO SKIP: ON" or "AUTO SKIP: OFF")
+		.. (multi and ("  %d/%d ON"):format(workspace:GetAttribute("AutoSkipVotes") or 0, voters) or "")
 	setButtonColor(autoSkipButton, auto and GREEN_BTN or rgb(150, 80, 70))
+
+	-- skip wave: while the next round is counting down
+	local myVoteSkip = player:GetAttribute("VoteSkip") == true
+	skipWaveButton.Visible = currentState() == "Playing" and workspace:GetAttribute("Phase") == "Match"
+		and inMatch and cd > 0 and round >= 1 and round < Config.TotalRounds
+	skipWaveButton.Text = multi and ("SKIP %d/%d"):format(workspace:GetAttribute("SkipVotes") or 0, voters) or "SKIP"
+	setButtonColor(skipWaveButton, myVoteSkip and GREEN_BTN or BTN)
+
+	-- surrender: everyone in the match has to agree (solo: at once)
+	local myVoteSurrender = player:GetAttribute("VoteSurrender") == true
+	if not inMatch then
+		surrenderButton.Text = "SPECTATING"
+	elseif not multi then
+		surrenderButton.Text = "SURRENDER"
+	else
+		surrenderButton.Text = (myVoteSurrender and "CANCEL VOTE %d/%d" or "SURRENDER %d/%d")
+			:format(workspace:GetAttribute("SurrenderVotes") or 0, voters)
+	end
+	setButtonColor(surrenderButton, (inMatch and not myVoteSurrender) and RED_BTN or GREY_BTN)
 	refreshCards()
 	refreshUpgradePanel()
 	updateHint()
@@ -1880,12 +1983,15 @@ local function refreshState()
 end
 
 workspace:GetAttributeChangedSignal("State"):Connect(refreshState)
-for _, attr in ipairs({ "Lives", "Round", "Countdown", "GameSpeed", "AutoSkip", "Phase", "PrepLeft", "EndReason", "WaveState", "WaveSpawned", "WaveCount" }) do
+for _, attr in ipairs({ "Lives", "Round", "Countdown", "GameSpeed", "AutoSkip", "Phase", "PrepLeft", "EndReason", "WaveState", "WaveSpawned", "WaveCount",
+	"Voters", "SpeedVotes", "AutoSkipVotes", "SkipVotes", "SurrenderVotes" }) do
 	workspace:GetAttributeChangedSignal(attr):Connect(refreshHud)
 end
-player:GetAttributeChangedSignal("Money"):Connect(refreshHud)
+for _, attr in ipairs({ "Money", "InMatch", "VoteSpeed", "VoteAutoSkip", "VoteSkip", "VoteSurrender" }) do
+	player:GetAttributeChangedSignal(attr):Connect(refreshHud)
+end
 
--- match-flow buttons: only the host's clicks reach the server; everyone else waits for the host
+-- host-only buttons (start, start match, retry, menu); speed, auto skip, skip and surrender are votes
 local function refreshHostButtons()
 	local host = isHost()
 	playButton.Text = host and "PLAY" or "WAITING FOR HOST"
@@ -1896,8 +2002,6 @@ local function refreshHostButtons()
 	menuButton.Text = host and "MAIN MENU" or "HOST DECIDES"
 	startMatchButton.Text = host and "START MATCH" or "HOST STARTS"
 	setButtonColor(startMatchButton, host and GREEN_BTN or GREY_BTN)
-	surrenderButton.Text = host and "SURRENDER" or "HOST ONLY"
-	setButtonColor(surrenderButton, host and RED_BTN or GREY_BTN)
 end
 workspace:GetAttributeChangedSignal("HostId"):Connect(function()
 	refreshHostButtons()
@@ -1914,16 +2018,19 @@ end)
 menuButton.MouseButton1Click:Connect(function()
 	if isHost() then Remote.ReturnToMenu:FireServer() end
 end)
+-- speed / auto skip: change MY vote (solo: that is the setting)
 speedButton.MouseButton1Click:Connect(function()
-	if not isHost() then notify(HOST_ONLY) return end
-	local speed = workspace:GetAttribute("GameSpeed") or 1
+	if not player:GetAttribute("InMatch") then notify("Spectators can't vote") return end
+	local mine = player:GetAttribute("VoteSpeed") or workspace:GetAttribute("GameSpeed") or 1
 	local options = Config.SpeedOptions
-	local idx = table.find(options, speed) or 1
+	local idx = table.find(options, mine) or 1
 	Remote.SetSpeed:FireServer(options[idx % #options + 1])
 end)
 autoSkipButton.MouseButton1Click:Connect(function()
-	if not isHost() then notify(HOST_ONLY) return end
-	Remote.SetAutoSkip:FireServer(not workspace:GetAttribute("AutoSkip"))
+	Remote.SetAutoSkip:FireServer(not player:GetAttribute("VoteAutoSkip"))
+end)
+skipWaveButton.MouseButton1Click:Connect(function()
+	Remote.SkipWave:FireServer()
 end)
 startMatchButton.MouseButton1Click:Connect(function()
 	if not isHost() then notify(HOST_ONLY) return end

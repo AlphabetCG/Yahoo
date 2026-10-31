@@ -33,28 +33,25 @@ local setAutoSkipRemote = newRemote("RemoteEvent", "SetAutoSkip")
 local beginMatchRemote = newRemote("RemoteEvent", "BeginMatch")
 local retryRemote = newRemote("RemoteEvent", "Retry")
 local shotRemote = newRemote("UnreliableRemoteEvent", "Shot") -- tells clients to draw a shot
+local skipWaveRemote = newRemote("RemoteEvent", "SkipWave")   -- vote to start the next round now
 
 -- saved player data: settings, gems, units, items (adds its own remotes to the Remotes folder)
 local PlayerData = require(script.Parent:WaitForChild("PlayerData"))
 local RateLimit = require(script.Parent:WaitForChild("RateLimit"))
 PlayerData.init(remotes)
 
--- ===== Host =====
--- The host is the player who has been in the server the longest. Only the host controls the match
--- flow (start, retry, menu, surrender, speed, auto skip). Shown to clients as workspace.HostId.
+-- ===== Host & votes =====
+-- The host is the player who has been in the server the longest (workspace.HostId). Only the host
+-- starts the stage, starts the match early, retries and goes back to the menu.
+-- Everything else is voted on by the players in the match (see recomputeVotes):
+--   Speed (most votes, ties -> slower), Auto Skip (majority, ties -> host), Skip Wave and Surrender
+--   (everyone). Each player's vote is a player attribute (VoteSpeed / VoteAutoSkip / VoteSkip /
+--   VoteSurrender); the totals are published on workspace for the HUD.
 local joinOrder = {}
+local recomputeVotes -- defined below (needs the match state)
 
 local function isHost(player)
 	return player.UserId == workspace:GetAttribute("HostId")
-end
-
--- the match follows the host's saved Auto Skip choice
-local function applyHostSettings()
-	local host = joinOrder[1]
-	local profile = host and PlayerData.Get(host)
-	if profile then
-		workspace:SetAttribute("AutoSkip", profile.Settings.AutoSkip)
-	end
 end
 
 local function updateHost()
@@ -62,24 +59,36 @@ local function updateHost()
 	local newId = host and host.UserId or 0
 	if workspace:GetAttribute("HostId") ~= newId then
 		workspace:SetAttribute("HostId", newId)
-		applyHostSettings()
 	end
+end
+
+local function setupVotes(player)
+	player:SetAttribute("VoteSpeed", 1)
+	player:SetAttribute("VoteAutoSkip", Config.AutoSkipDefault)
+	player:SetAttribute("VoteSkip", false)
+	player:SetAttribute("VoteSurrender", false)
 end
 
 Players.PlayerAdded:Connect(function(player)
 	if not table.find(joinOrder, player) then table.insert(joinOrder, player) end
+	setupVotes(player)
 	updateHost()
+	recomputeVotes()
 end)
 for _, p in ipairs(Players:GetPlayers()) do
 	if not table.find(joinOrder, p) then table.insert(joinOrder, p) end
+	setupVotes(p)
 end
 Players.PlayerRemoving:Connect(function(player)
 	local idx = table.find(joinOrder, player)
 	if idx then table.remove(joinOrder, idx) end
 	updateHost()
+	task.defer(recomputeVotes) -- after the player is gone
 end)
-PlayerData.OnProfileLoaded(function(player)
-	if isHost(player) then applyHostSettings() end
+-- a player's saved Auto Skip choice is their vote
+PlayerData.OnProfileLoaded(function(player, profile)
+	player:SetAttribute("VoteAutoSkip", profile.Settings.AutoSkip)
+	recomputeVotes()
 end)
 workspace:SetAttribute("HostId", 0)
 updateHost()
@@ -126,7 +135,8 @@ local stageBossKilled = false
 local pendingHits = {}    -- shots in flight: { Enemy, Damage, Owner, Due } (damage lands when the bolt arrives)
 local towers = {}         -- list of tower entries (see createTower)
 local towerByModel = {}   -- Model -> tower entry
-local matchRequested = false -- set when a player presses START MATCH during the prep phase
+local matchRequested = false -- set when the host presses START MATCH during the prep phase
+local skipRequested = false  -- set when everyone in the match voted to skip the wave
 local session = 0         -- changes every new game so old round loops stop themselves
 local stageTime = 0       -- real seconds spent on this stage
 local stageSyncTimer = 0
@@ -183,8 +193,62 @@ local function printEconomy()
 	end
 end
 
+-- ===== Party (one server = one match) =====
+-- Players in the current stage have InMatch = true. When a stage starts, the first
+-- Config.MaxPartySize players (by join order) are in it. Anyone who joins later spectates and is
+-- let in at the start of the next round (if there is room) with the same money the team has earned.
+local teamEarned = 0   -- money every player in the match has earned this stage (start money not included)
+local moneyCarry = {}  -- [player] = part of a coin earned but not paid out yet
+
+local function participants()
+	local list = {}
+	for _, p in ipairs(joinOrder) do
+		if p.Parent and p:GetAttribute("InMatch") then table.insert(list, p) end
+	end
+	return list
+end
+
+local function partySize()
+	return math.max(1, #participants())
+end
+
+-- Pays `amount` (what a solo player would get) to every player in the match, scaled by
+-- Config.TeamIncome for the party size. Fractions are carried over so nothing is lost.
+local function giveTeamMoney(amount, source)
+	local share = amount * Config.TeamIncome[math.min(partySize(), #Config.TeamIncome)]
+	teamEarned += share
+	for _, p in ipairs(participants()) do
+		local total = (moneyCarry[p] or 0) + share
+		local whole = math.floor(total + 1e-6)
+		moneyCarry[p] = total - whole
+		giveMoney(p, whole, source)
+	end
+end
+
+-- Lets waiting players into the match while there is room (prep phase / start of a round).
+local function admitPlayers()
+	local count = #participants()
+	for _, p in ipairs(joinOrder) do
+		if count >= Config.MaxPartySize then break end
+		if p.Parent and not p:GetAttribute("InMatch") then
+			local money = Config.StartMoney + math.floor(teamEarned)
+			p:SetAttribute("InMatch", true)
+			p:SetAttribute("Money", money)
+			moneyCarry[p] = 0
+			trackIncome(p, "Start", money)
+			count += 1
+		end
+	end
+	recomputeVotes()
+end
+
 local function setupPlayer(player)
 	player:SetAttribute("Money", Config.StartMoney)
+	player:SetAttribute("InMatch", false)
+	-- joining during the prep phase: play right away (later joiners wait for the next round)
+	if workspace:GetAttribute("State") == "Playing" and workspace:GetAttribute("Phase") == "Prep" then
+		admitPlayers()
+	end
 end
 for _, p in ipairs(Players:GetPlayers()) do setupPlayer(p) end
 Players.PlayerAdded:Connect(setupPlayer)
@@ -210,8 +274,8 @@ end
 local function endGame(newState, reason)
 	if workspace:GetAttribute("State") == "Playing" then
 		if Config.DebugEconomy then printEconomy() end
-		-- hand out the stage rewards once, before clients see the result screen
-		for _, p in ipairs(Players:GetPlayers()) do
+		-- hand out the stage rewards once, before clients see the result screen (spectators get none)
+		for _, p in ipairs(participants()) do
 			local rewards = PlayerData.GrantStageRewards(p, {
 				Won = newState == "Victory",
 				Round = workspace:GetAttribute("Round") or 0,
@@ -224,12 +288,17 @@ local function endGame(newState, reason)
 	end
 	session += 1
 	clearEnemies()
+	for _, p in ipairs(Players:GetPlayers()) do
+		p:SetAttribute("VoteSkip", false)
+		p:SetAttribute("VoteSurrender", false)
+	end
 	workspace:SetAttribute("Countdown", 0)
 	workspace:SetAttribute("WaveState", "")
 	workspace:SetAttribute("GameSpeed", 1)
 	publishStage()
 	workspace:SetAttribute("EndReason", reason or "")
 	workspace:SetAttribute("State", newState)
+	recomputeVotes()
 end
 
 local function goToMenu()
@@ -238,6 +307,7 @@ local function goToMenu()
 	workspace:SetAttribute("Countdown", 0)
 	workspace:SetAttribute("GameSpeed", 1)
 	workspace:SetAttribute("State", "Menu")
+	recomputeVotes()
 end
 
 local function loseLives(amount)
@@ -269,6 +339,7 @@ local function spawnEnemy(tier, isBoss, round)
 	if #path < 2 then return end
 	local health = isBoss and Config.Boss.Health
 		or tierInfo(tier).HP * (1 + Config.HpPerRound * math.max(0, (round or 1) - 1))
+	health *= 1 + Config.HpPerExtraPlayer * (partySize() - 1) -- tougher with more players
 	local part = Instance.new("Part")
 	part.Name = "Enemy"
 	part.Shape = Enum.PartType.Ball
@@ -315,7 +386,7 @@ local function damageEnemy(enemy, damage, owner)
 	enemy.Health -= damage
 	local pops = math.floor(enemy.Carry + 1e-6)
 	enemy.Carry -= pops
-	giveMoney(owner, pops * Config.RewardPerPop, "Pops")
+	giveTeamMoney(pops * Config.RewardPerPop, "Pops") -- shared: every player in the match is paid
 	if enemy.Health <= 1e-6 then
 		enemy.Dead = true
 		stageKills += 1
@@ -561,6 +632,7 @@ end
 placeTowerRemote.OnServerInvoke = function(player, unitId, pos)
 	if not RateLimit.allow(player, "PlaceTower", 10) then return false, "Slow down" end
 	if workspace:GetAttribute("State") ~= "Playing" then return false, "Game is not running" end
+	if not player:GetAttribute("InMatch") then return false, "You join the match at the next round" end
 	if typeof(unitId) ~= "string" or typeof(pos) ~= "Vector3" then return false, "Bad request" end
 	local instance = PlayerData.GetUnit(player, unitId)
 	if not instance then return false, "You do not own this unit" end
@@ -617,6 +689,19 @@ upgradeTowerRemote.OnServerInvoke = function(player, model, all)
 	return true, bought
 end
 
+-- A player who leaves mid-stage takes their units off the map (nobody else could upgrade or sell them)
+Players.PlayerRemoving:Connect(function(player)
+	moneyCarry[player] = nil
+	for i = #towers, 1, -1 do
+		local t = towers[i]
+		if t.Owner == player then
+			towerByModel[t.Model] = nil
+			t.Model:Destroy()
+			table.remove(towers, i)
+		end
+	end
+end)
+
 -- Selling returns Config.SellRefund (50%) of everything spent on the unit (placement + upgrades)
 sellTowerRemote.OnServerInvoke = function(player, model)
 	if not RateLimit.allow(player, "SellTower", 10) then return false, "Slow down" end
@@ -667,9 +752,14 @@ local function startGame()
 	workspace:SetAttribute("WaveState", "")
 	workspace:SetAttribute("GameSpeed", 1)
 	table.clear(stageIncome)
+	table.clear(moneyCarry)
+	teamEarned = 0
+	skipRequested = false
 	for _, p in ipairs(Players:GetPlayers()) do
-		p:SetAttribute("Money", Config.StartMoney)
-		trackIncome(p, "Start", Config.StartMoney)
+		p:SetAttribute("InMatch", false)
+		p:SetAttribute("VoteSpeed", 1)
+		p:SetAttribute("VoteSkip", false)
+		p:SetAttribute("VoteSurrender", false)
 	end
 	-- stage timer (game time)
 	stageTime = 0
@@ -680,6 +770,7 @@ local function startGame()
 	workspace:SetAttribute("PrepLeft", Config.PrepTime)
 	workspace:SetAttribute("Phase", "Prep")
 	workspace:SetAttribute("State", "Playing")
+	admitPlayers() -- the first Config.MaxPartySize players are in the match
 
 	-- Spawns one round's enemies, spread over at most Config.MaxSpawnTime seconds.
 	-- Returns a progress table so the round timer can watch how many have appeared.
@@ -736,11 +827,12 @@ local function startGame()
 		local progress
 		for r = 1, Config.TotalRounds do
 			workspace:SetAttribute("Round", r)
+			skipRequested = false
+			for _, p in ipairs(Players:GetPlayers()) do p:SetAttribute("VoteSkip", false) end
+			admitPlayers() -- spectators who joined during the last round join now
 			if r > 1 then
-				-- bonus for reaching the next round
-				for _, p in ipairs(Players:GetPlayers()) do
-					giveMoney(p, Config.RoundBonus + (r - 2) * Config.RoundBonusStep, "RoundBonus")
-				end
+				-- bonus for reaching the next round (shared like pops)
+				giveTeamMoney(Config.RoundBonus + (r - 2) * Config.RoundBonusStep, "RoundBonus")
 			end
 			progress = spawnRound(r)
 
@@ -756,7 +848,7 @@ local function startGame()
 				if workspace:GetAttribute("AutoSkip") then
 					local fraction = Config.SkipSpawnMin + math.random() * (Config.SkipSpawnMax - Config.SkipSpawnMin)
 					local need = math.max(1, math.ceil(thisWave.Count * fraction))
-					while thisWave.Spawned < need do
+					while thisWave.Spawned < need and not skipRequested do
 						local remaining = (need - thisWave.Spawned) * thisWave.Interval
 						workspace:SetAttribute("Countdown", math.max(1, math.ceil(remaining)))
 						if not gameWait(0.25, mySession) then return end
@@ -768,7 +860,7 @@ local function startGame()
 					end
 					workspace:SetAttribute("WaveState", "Clearing")
 					local deadline = gameTime + Config.WaveClearTime
-					while gameTime < deadline and #enemies > 0 do
+					while gameTime < deadline and #enemies > 0 and not skipRequested do
 						workspace:SetAttribute("Countdown", math.max(1, math.ceil(deadline - gameTime)))
 						if not gameWait(0.25, mySession) then return end
 					end
@@ -801,12 +893,21 @@ returnToMenuRemote.OnServerEvent:Connect(function(player)
 	end
 end)
 
--- Surrender: ends the stage immediately and shows the STAGE FAILED screen
+-- Surrender vote (toggles): the stage ends once every player in the match has voted (solo: at once)
 surrenderRemote.OnServerEvent:Connect(function(player)
-	if not hostRequest(player, "Surrender") then return end
-	if workspace:GetAttribute("State") == "Playing" then
-		endGame("GameOver", "Surrender")
-	end
+	if not RateLimit.allow(player, "Surrender", 2) then return end
+	if workspace:GetAttribute("State") ~= "Playing" or not player:GetAttribute("InMatch") then return end
+	player:SetAttribute("VoteSurrender", not player:GetAttribute("VoteSurrender"))
+	recomputeVotes()
+end)
+
+-- Skip Wave vote (toggles): once every player in the match agrees, the next round starts now
+skipWaveRemote.OnServerEvent:Connect(function(player)
+	if not RateLimit.allow(player, "SkipWave", 2) then return end
+	if workspace:GetAttribute("State") ~= "Playing" or workspace:GetAttribute("Phase") ~= "Match" then return end
+	if not player:GetAttribute("InMatch") then return end
+	player:SetAttribute("VoteSkip", not player:GetAttribute("VoteSkip"))
+	recomputeVotes()
 end)
 
 -- Retry (from the stage clear / failed screen): reset everything and start a fresh prep phase
@@ -829,29 +930,94 @@ beginMatchRemote.OnServerEvent:Connect(function(player)
 	end
 end)
 
--- Auto skip: ON = next round starts when ~60-70% of the wave has appeared,
---            OFF = next round only starts when the wave's own timer runs out
--- Everyone's choice is saved; only the host's choice drives the match.
-if workspace:GetAttribute("AutoSkip") == nil then
-	workspace:SetAttribute("AutoSkip", Config.AutoSkipDefault)
-end
-setAutoSkipRemote.OnServerEvent:Connect(function(player, value)
-	if typeof(value) ~= "boolean" or not RateLimit.allow(player, "SetAutoSkip", 2) then return end
-	PlayerData.SetSetting(player, "AutoSkip", value) -- remembered between sessions
-	if isHost(player) then
-		workspace:SetAttribute("AutoSkip", value)
+-- ===== Votes =====
+-- Who votes: the players in the match during a stage, everyone in the server otherwise.
+local function voters()
+	if workspace:GetAttribute("State") == "Playing" then
+		local list = participants()
+		if #list > 0 then return list end
 	end
-end)
+	local all = {}
+	for _, p in ipairs(joinOrder) do
+		if p.Parent then table.insert(all, p) end
+	end
+	return all
+end
 
--- Game speed (x1 / x2 / x3)
-setSpeedRemote.OnServerEvent:Connect(function(player, speed)
-	if not hostRequest(player, "SetSpeed") then return end
-	if workspace:GetAttribute("State") ~= "Playing" then return end
-	if table.find(Config.SpeedOptions, speed) then
+-- Works out the outcome of every vote and publishes the totals:
+-- workspace Voters, SpeedVotes (for the current speed), AutoSkipVotes (ON), SkipVotes, SurrenderVotes.
+recomputeVotes = function()
+	local list = voters()
+	local n = #list
+	local playing = workspace:GetAttribute("State") == "Playing"
+
+	-- speed: the most votes wins, a tie goes to the slower speed
+	local speedVotes = {}
+	for _, p in ipairs(list) do
+		local v = p:GetAttribute("VoteSpeed") or 1
+		speedVotes[v] = (speedVotes[v] or 0) + 1
+	end
+	local speed, best = 1, -1
+	for _, option in ipairs(Config.SpeedOptions) do
+		if (speedVotes[option] or 0) > best then
+			speed, best = option, speedVotes[option] or 0
+		end
+	end
+	if not playing then speed = 1 end
+	if workspace:GetAttribute("GameSpeed") ~= speed then
 		publishStage()
 		workspace:SetAttribute("GameSpeed", speed)
 	end
+
+	-- auto skip: majority, a tie follows the host's vote
+	local on = 0
+	for _, p in ipairs(list) do
+		if p:GetAttribute("VoteAutoSkip") then on += 1 end
+	end
+	local host = joinOrder[1]
+	local auto = on * 2 > n or (on * 2 == n and host ~= nil and host:GetAttribute("VoteAutoSkip") == true)
+	workspace:SetAttribute("AutoSkip", auto)
+
+	-- skip wave / surrender: everyone has to agree
+	local skip, surrender = 0, 0
+	for _, p in ipairs(list) do
+		if p:GetAttribute("VoteSkip") then skip += 1 end
+		if p:GetAttribute("VoteSurrender") then surrender += 1 end
+	end
+	workspace:SetAttribute("Voters", n)
+	workspace:SetAttribute("SpeedVotes", speedVotes[speed] or 0)
+	workspace:SetAttribute("AutoSkipVotes", on)
+	workspace:SetAttribute("SkipVotes", skip)
+	workspace:SetAttribute("SurrenderVotes", surrender)
+
+	if playing and n > 0 and skip >= n then
+		skipRequested = true
+	end
+	if playing and n > 0 and surrender >= n then
+		endGame("GameOver", "Surrender")
+	end
+end
+
+-- Auto skip: ON = next round starts when ~60-70% of the wave has appeared,
+--            OFF = next round only starts when the wave's own timer runs out (or the wave is wiped)
+setAutoSkipRemote.OnServerEvent:Connect(function(player, value)
+	if typeof(value) ~= "boolean" or not RateLimit.allow(player, "SetAutoSkip", 2) then return end
+	PlayerData.SetSetting(player, "AutoSkip", value) -- remembered between sessions
+	player:SetAttribute("VoteAutoSkip", value)
+	recomputeVotes()
 end)
+
+-- Game speed vote (x1 / x2 / x3)
+setSpeedRemote.OnServerEvent:Connect(function(player, speed)
+	if not RateLimit.allow(player, "SetSpeed", 3) then return end
+	if workspace:GetAttribute("State") ~= "Playing" then return end
+	if not table.find(Config.SpeedOptions, speed) then return end
+	player:SetAttribute("VoteSpeed", speed)
+	recomputeVotes()
+end)
+
+workspace:SetAttribute("AutoSkip", Config.AutoSkipDefault)
+recomputeVotes()
 
 -- ===== Main loop =====
 RunService.Heartbeat:Connect(function(dt)
