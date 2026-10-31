@@ -4,8 +4,18 @@ local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local Debris = game:GetService("Debris")
+local TeleportService = game:GetService("TeleportService")
 
 local Config = require(ReplicatedStorage:WaitForChild("Config"))
+
+-- Which place is this? (Config.PlaceRole) The same scripts run in both places.
+--   Lobby: menus only, no map. START teleports the lobby room to its own reserved Match server.
+--   Match: plays the stage it was sent (TeleportData), then sends players back to the Lobby.
+--   Single (Config.Places.Match = 0): stages are played in this server.
+local PLACE_ROLE = Config.PlaceRole()
+local IS_MATCH_PLACE = PLACE_ROLE == "Match"
+local USE_TELEPORT = PLACE_ROLE == "Lobby"
+workspace:SetAttribute("IsMatchPlace", IS_MATCH_PLACE)
 
 -- No walking characters in a tower defense game
 Players.CharacterAutoLoads = false
@@ -45,10 +55,23 @@ PlayerData.init(remotes)
 -- starts the stage, starts the match early, retries and goes back to the menu.
 -- starts the stage, starts the match early, sets the game speed, retries and goes back to the menu.
 -- The rest is voted on by the players in the match (see recomputeVotes):
---   Auto Skip (majority, ties -> host), Skip Wave and Surrender (everyone). Each player's vote is a
---   player attribute (VoteAutoSkip / VoteSkip / VoteSurrender); totals are published on workspace.
+--   Skip Wave and Surrender (everyone has to agree; Auto Skip ON players skip by themselves).
+--   Each player's vote is a player attribute (VoteAutoSkip / VoteSkip / VoteSurrender); totals are on workspace.
 local joinOrder = {}
 local recomputeVotes -- defined below (needs the match state)
+
+-- Everyone in the server, longest-present first. Uses Players:GetPlayers() so a player is never
+-- missed when several PlayerAdded handlers run in a different order (joinOrder only sorts).
+local function playersInOrder()
+	local list = {}
+	for _, p in ipairs(joinOrder) do
+		if p.Parent then table.insert(list, p) end
+	end
+	for _, p in ipairs(Players:GetPlayers()) do
+		if not table.find(list, p) then table.insert(list, p) end
+	end
+	return list
+end
 
 local function isHost(player)
 	return player.UserId == workspace:GetAttribute("HostId")
@@ -62,8 +85,8 @@ local function updateHost()
 	local host = matchHost
 	if not (host and host.Parent) then
 		host = nil
-		for _, p in ipairs(joinOrder) do
-			if p.Parent and p:GetAttribute("InMatch") then
+		for _, p in ipairs(playersInOrder()) do
+			if p:GetAttribute("InMatch") then
 				host = p
 				break
 			end
@@ -142,9 +165,17 @@ if not enemiesFolder then
 	enemiesFolder.Parent = workspace
 end
 
-local path = Config.GetPath()
-if #path < 2 then
-	warn("GameServer: Workspace.Waypoints needs at least 2 parts named 1, 2, 3...")
+-- The game draws everything on the client from parts it must be able to see (waypoints, units,
+-- enemies) and players have no character, so Workspace.StreamingEnabled has to be off
+-- (default.project.json sets it). New places in Studio start with it on.
+if workspace.StreamingEnabled then
+	warn("GameServer: Workspace.StreamingEnabled is ON in this place. Turn it off (Rojo sync / Workspace properties), "
+		.. "otherwise clients don't see the path, units or enemies.")
+end
+
+local path = USE_TELEPORT and {} or Config.GetPath() -- the Lobby has no map
+if not USE_TELEPORT and #path < 2 then
+	warn("GameServer: Workspace.Waypoints needs at least 2 parts named 1, 2, 3... (is this place synced with Rojo?)")
 end
 
 -- ===== Game state (shared with clients through attributes on Workspace) =====
@@ -166,7 +197,8 @@ local pendingHits = {}    -- shots in flight: { Enemy, Damage, Owner, Due } (dam
 local towers = {}         -- list of tower entries (see createTower)
 local towerByModel = {}   -- Model -> tower entry
 local matchRequested = false -- set when the host presses START MATCH during the prep phase
-local skipRequested = false  -- set when everyone in the match voted to skip the wave
+local skipRequested = false  -- set when everyone in the match agreed to skip the wave
+local autoSkipReady = false  -- the wave reached its auto-skip point: players with Auto Skip ON count as skipping
 local session = 0         -- changes every new game so old round loops stop themselves
 local stageTime = 0       -- real seconds spent on this stage
 local stageSyncTimer = 0
@@ -237,8 +269,8 @@ local moneyCarry = {}  -- [player] = part of a coin earned but not paid out yet
 
 local function participants()
 	local list = {}
-	for _, p in ipairs(joinOrder) do
-		if p.Parent and p:GetAttribute("InMatch") then table.insert(list, p) end
+	for _, p in ipairs(playersInOrder()) do
+		if p:GetAttribute("InMatch") then table.insert(list, p) end
 	end
 	return list
 end
@@ -264,9 +296,9 @@ end
 -- (prep phase / start of a round). Other players in the server just watch.
 local function admitPlayers()
 	local count = #participants()
-	for _, p in ipairs(joinOrder) do
+	for _, p in ipairs(playersInOrder()) do
 		if count >= Config.MaxPartySize then break end
-		if p.Parent and not p:GetAttribute("InMatch") and matchRoster[p.UserId] then
+		if not p:GetAttribute("InMatch") and matchRoster[p.UserId] then
 			local money = stageStartMoney + math.floor(teamEarned)
 			p:SetAttribute("InMatch", true)
 			p:SetAttribute("Money", money)
@@ -279,8 +311,11 @@ local function admitPlayers()
 end
 
 local function setupPlayer(player)
-	player:SetAttribute("Money", Config.StartMoney)
-	player:SetAttribute("InMatch", false)
+	-- only initialise: another PlayerAdded handler (the Match place start) may already have let them in
+	if player:GetAttribute("InMatch") == nil then
+		player:SetAttribute("Money", Config.StartMoney)
+		player:SetAttribute("InMatch", false)
+	end
 	-- a lobby member joining during the prep phase plays right away (later: at the next round)
 	if workspace:GetAttribute("State") == "Playing" and workspace:GetAttribute("Phase") == "Prep" then
 		admitPlayers()
@@ -913,7 +948,9 @@ local function startGame(stageId, members, host)
 			r += 1
 			workspace:SetAttribute("Round", r)
 			skipRequested = false
+			autoSkipReady = false
 			for _, p in ipairs(Players:GetPlayers()) do p:SetAttribute("VoteSkip", false) end
+			recomputeVotes()
 			admitPlayers() -- spectators who joined during the last round join now
 			if r > 1 then
 				-- bonus for reaching the next round (shared like pops)
@@ -921,35 +958,36 @@ local function startGame(stageId, members, host)
 			end
 			progress = spawnRound(r)
 
-			-- AUTO SKIP ON : the next round starts once 60-70% of this wave's enemies have appeared
-			--                (the rest keep spawning during the next round).
-			-- AUTO SKIP OFF: no timer while the wave spawns. Once its last enemy has appeared a
-			--                Config.WaveClearTime timer starts; the next round begins when it runs out
-			--                or when every enemy on the map is gone.
-			-- The setting is read once per round, so toggling it mid-wave applies from the next round.
+			-- When does the next round start? As soon as EVERY player in the match skips:
+			--   * a player with Auto Skip ON skips by themselves once 60-70% of the wave has appeared
+			--     (the rest keep spawning during the next round)
+			--   * a player with Auto Skip OFF presses SKIP
+			-- Otherwise: once the wave's last enemy has appeared, a Config.WaveClearTime timer starts and the
+			-- next round begins when it runs out or every enemy on the map is gone.
+			-- Solo this is exactly "Auto Skip ON: next round at 60-70%, OFF: timer (or press SKIP)".
 			if total == 0 or r < total then
 				local thisWave = progress
+				local fraction = Config.SkipSpawnMin + math.random() * (Config.SkipSpawnMax - Config.SkipSpawnMin)
+				local need = math.max(1, math.ceil(thisWave.Count * fraction))
+				local deadline = nil
 				workspace:SetAttribute("WaveState", "Spawning")
-				if workspace:GetAttribute("AutoSkip") then
-					local fraction = Config.SkipSpawnMin + math.random() * (Config.SkipSpawnMax - Config.SkipSpawnMin)
-					local need = math.max(1, math.ceil(thisWave.Count * fraction))
-					while thisWave.Spawned < need and not skipRequested do
-						local remaining = (need - thisWave.Spawned) * thisWave.Interval
-						workspace:SetAttribute("Countdown", math.max(1, math.ceil(remaining)))
-						if not gameWait(0.25, mySession) then return end
+				workspace:SetAttribute("Countdown", 0)
+				while not skipRequested do
+					if not autoSkipReady and thisWave.Spawned >= need then
+						autoSkipReady = true
+						recomputeVotes() -- Auto Skip ON players now count as skipping
 					end
-				else
-					workspace:SetAttribute("Countdown", 0)
-					while thisWave.Spawned < thisWave.Count do
-						if not gameWait(0.25, mySession) then return end
-					end
-					workspace:SetAttribute("WaveState", "Clearing")
-					local deadline = gameTime + Config.WaveClearTime
-					while gameTime < deadline and #enemies > 0 and not skipRequested do
+					if thisWave.Spawned >= thisWave.Count then
+						if not deadline then
+							deadline = gameTime + Config.WaveClearTime
+							workspace:SetAttribute("WaveState", "Clearing")
+						end
+						if gameTime >= deadline or #enemies == 0 then break end
 						workspace:SetAttribute("Countdown", math.max(1, math.ceil(deadline - gameTime)))
-						if not gameWait(0.25, mySession) then return end
 					end
+					if not gameWait(0.25, mySession) then return end
 				end
+				autoSkipReady = false
 			end
 		end
 
@@ -966,9 +1004,91 @@ local function startGame(stageId, members, host)
 	end)
 end
 
+-- Lobby: check once that Config.Places.Match really is a place of THIS experience. A place that was
+-- made as a separate experience can't receive reserved-server teleports from here.
+local matchPlaceProblem = nil -- shown to the host instead of the raw teleport error when set
+if USE_TELEPORT and not RunService:IsStudio() then
+	task.spawn(function()
+		local ok, err = pcall(function()
+			local pages = game:GetService("AssetService"):GetGamePlacesAsync()
+			local found = {}
+			while true do
+				for _, place in ipairs(pages:GetCurrentPage()) do
+					if place.PlaceId == Config.Places.Match then return end
+					table.insert(found, ("%s (%d)"):format(tostring(place.Name), place.PlaceId))
+				end
+				if pages.IsFinished then break end
+				pages:AdvanceToNextPageAsync()
+			end
+			matchPlaceProblem = ("Place %d is not in this experience (GameId %d)"):format(Config.Places.Match, game.GameId)
+			warn(("GameServer: %s. Places in this experience: %s"):format(matchPlaceProblem, table.concat(found, ", ")))
+		end)
+		if not ok then warn("GameServer: couldn't list this experience's places: " .. tostring(err)) end
+	end)
+end
+
 -- ===== Lobby rooms start stages =====
--- For now every stage runs inside this server (one at a time). Teleporting rooms to the Match place
--- (Config.Places.Match) comes next.
+-- Live game: the room is teleported to its own reserved Match server (TeleportData tells that server
+-- the stage, the host and the members). Studio / Config.Places.Match = 0: the stage runs in this server.
+local teleportRetries = {} -- [player] = { Options = TeleportOptions, Tries = n }
+
+local function teleportRoom(room)
+	if RunService:IsStudio() then
+		return false, "Teleports only work in the published game. To test a stage in Studio, open the 2nd place."
+	end
+	local members = table.clone(room.Members)
+	local userIds = {}
+	for _, p in ipairs(members) do table.insert(userIds, p.UserId) end
+	local options = Instance.new("TeleportOptions")
+	options.ShouldReserveServer = true
+	options:SetTeleportData({
+		RoomKey = ("%s/%d/%d"):format(game.JobId, room.Id, os.time()), -- this room's Match server only
+		StageId = room.StageId,
+		HostId = room.Host.UserId,
+		Members = userIds,
+		ReturnPlaceId = game.PlaceId,
+	})
+	Lobby.SetStarted(room, true)
+	local ok, result = pcall(function()
+		return TeleportService:TeleportAsync(Config.Places.Match, members, options)
+	end)
+	if not ok then
+		Lobby.SetStarted(room, false)
+		local reason = tostring(result):gsub("^.-:%d+: ", "") -- drop the script location
+		warn("GameServer: teleport to the Match place failed: " .. reason)
+		local text = "Couldn't start: " .. reason:sub(1, 100)
+		if matchPlaceProblem then text ..= "  |  " .. matchPlaceProblem end
+		return false, text
+	end
+	-- if one player's teleport fails, retry them into the same reserved server
+	local retryOptions = Instance.new("TeleportOptions")
+	retryOptions.ReservedServerAccessCode = result.ReservedServerAccessCode
+	retryOptions:SetTeleportData(options:GetTeleportData())
+	for _, p in ipairs(members) do
+		teleportRetries[p] = { Options = retryOptions, Tries = 0 }
+	end
+	return true, "Starting..."
+end
+
+TeleportService.TeleportInitFailed:Connect(function(player, result, errorMessage)
+	local retry = teleportRetries[player]
+	warn(("GameServer: teleport failed for %s (%s): %s"):format(player.Name, tostring(result), tostring(errorMessage)))
+	if not retry or retry.Tries >= 3 then
+		teleportRetries[player] = nil
+		local room = Lobby.RoomOf(player)
+		if room then Lobby.SetStarted(room, false) end -- they stay in their lobby room and can try again
+		return
+	end
+	retry.Tries += 1
+	task.wait(2 * retry.Tries)
+	pcall(function()
+		TeleportService:TeleportAsync(Config.Places.Match, { player }, retry.Options)
+	end)
+end)
+Players.PlayerRemoving:Connect(function(player)
+	teleportRetries[player] = nil
+end)
+
 Lobby.init(remotes, {
 	CanCreate = function(player, stageId)
 		local required = Config.StageRequirement(stageId)
@@ -978,6 +1098,10 @@ Lobby.init(remotes, {
 		return true
 	end,
 	StartRoom = function(room)
+		if USE_TELEPORT then
+			return teleportRoom(room)
+		end
+		-- Studio / no Match place: play the stage in this server
 		if workspace:GetAttribute("State") ~= "Menu" then
 			return false, "A stage is already running in this server"
 		end
@@ -988,9 +1112,32 @@ Lobby.init(remotes, {
 	end,
 })
 
+local returnPlaceId = nil -- Match place: the Lobby place the players came from (from TeleportData)
+
+-- Match place: sends players back to the Lobby (each player chooses when)
+local function sendToLobby(players)
+	if not returnPlaceId or RunService:IsStudio() then return false end
+	local ok, err = pcall(function()
+		TeleportService:TeleportAsync(returnPlaceId, players)
+	end)
+	if not ok then warn("GameServer: teleport back to the lobby failed: " .. tostring(err)) end
+	return ok
+end
+
 returnToMenuRemote.OnServerEvent:Connect(function(player)
-	if not hostRequest(player, "ReturnToMenu") then return end
 	local state = workspace:GetAttribute("State")
+	if IS_MATCH_PLACE then
+		-- anyone can go back to the lobby once the stage is over
+		if RateLimit.allow(player, "ReturnToMenu", 1) and (state == "GameOver" or state == "Victory") then
+			if returnPlaceId and not RunService:IsStudio() then
+				sendToLobby({ player })
+			elseif isHost(player) then
+				goToMenu() -- Studio / opened directly: no lobby to go to, the stage starts again
+			end
+		end
+		return
+	end
+	if not hostRequest(player, "ReturnToMenu") then return end
 	if state == "GameOver" or state == "Victory" then
 		goToMenu()
 	end
@@ -1050,37 +1197,24 @@ local function voters()
 		local list = participants()
 		if #list > 0 then return list end
 	end
-	local all = {}
-	for _, p in ipairs(joinOrder) do
-		if p.Parent then table.insert(all, p) end
-	end
-	return all
+	return playersInOrder()
 end
 
 -- Works out the outcome of every vote and publishes the totals:
--- workspace Voters, AutoSkipVotes (players with it ON), SkipVotes, SurrenderVotes.
+-- workspace Voters, SkipVotes (players skipping this wave: pressed SKIP, or Auto Skip ON once the wave
+-- reached its auto-skip point), SurrenderVotes.
 recomputeVotes = function()
 	local list = voters()
 	local n = #list
 	local playing = workspace:GetAttribute("State") == "Playing"
 
-	-- auto skip: majority, a tie follows the host's vote
-	local on = 0
-	for _, p in ipairs(list) do
-		if p:GetAttribute("VoteAutoSkip") then on += 1 end
-	end
-	local host = joinOrder[1]
-	local auto = on * 2 > n or (on * 2 == n and host ~= nil and host:GetAttribute("VoteAutoSkip") == true)
-	workspace:SetAttribute("AutoSkip", auto)
-
 	-- skip wave / surrender: everyone has to agree
 	local skip, surrender = 0, 0
 	for _, p in ipairs(list) do
-		if p:GetAttribute("VoteSkip") then skip += 1 end
+		if p:GetAttribute("VoteSkip") or (autoSkipReady and p:GetAttribute("VoteAutoSkip")) then skip += 1 end
 		if p:GetAttribute("VoteSurrender") then surrender += 1 end
 	end
 	workspace:SetAttribute("Voters", n)
-	workspace:SetAttribute("AutoSkipVotes", on)
 	workspace:SetAttribute("SkipVotes", skip)
 	workspace:SetAttribute("SurrenderVotes", surrender)
 
@@ -1092,8 +1226,8 @@ recomputeVotes = function()
 	end
 end
 
--- Auto skip: ON = next round starts when ~60-70% of the wave has appeared,
---            OFF = next round only starts when the wave's own timer runs out (or the wave is wiped)
+-- Auto Skip (each player's own setting): ON = skip by yourself once ~60-70% of the wave has appeared,
+-- OFF = press SKIP (or wait for the timer). The round moves on early when every player skips.
 setAutoSkipRemote.OnServerEvent:Connect(function(player, value)
 	if typeof(value) ~= "boolean" or not RateLimit.allow(player, "SetAutoSkip", 2) then return end
 	PlayerData.SetSetting(player, "AutoSkip", value) -- remembered between sessions
@@ -1110,8 +1244,73 @@ setSpeedRemote.OnServerEvent:Connect(function(player, speed)
 	workspace:SetAttribute("GameSpeed", speed)
 end)
 
-workspace:SetAttribute("AutoSkip", Config.AutoSkipDefault)
 recomputeVotes()
+
+-- ===== Match place: play the stage the lobby sent =====
+-- The first player to arrive carries the TeleportData (room key, stage, host, members, lobby place). The
+-- stage starts once every member is here, or after MATCH_WAIT seconds with whoever made it.
+-- Live game: only the room's members may be here, in the server the lobby reserved for them. Anyone
+-- else (joined the place directly, followed a friend, another room) is kicked.
+-- Studio (no TeleportData): Story stage 1 with everyone who joined within a few seconds.
+if IS_MATCH_PLACE then
+	local MATCH_WAIT = 20
+	local STUDIO_WAIT = 3
+	local info = nil
+	local firstJoin = 0
+
+	local function tryStart()
+		if not info or workspace:GetAttribute("State") ~= "Menu" then return end
+		local present = {}
+		for _, userId in ipairs(info.Members) do
+			local p = Players:GetPlayerByUserId(userId)
+			if p then table.insert(present, p) end
+		end
+		local waited = os.clock() - firstJoin
+		if #present == 0 then return end
+		if info.Direct and waited < STUDIO_WAIT then return end
+		if not info.Direct and #present < #info.Members and waited < MATCH_WAIT then return end
+		local host = Players:GetPlayerByUserId(info.HostId) or present[1]
+		startGame(info.StageId, present, host)
+	end
+
+	-- a server the lobby reserved (not a public server, not a bought private server)
+	local isReservedServer = game.PrivateServerId ~= "" and game.PrivateServerOwnerId == 0
+
+	Players.PlayerAdded:Connect(function(player)
+		local data = player:GetJoinData().TeleportData
+		local fromLobby = typeof(data) == "table" and typeof(data.RoomKey) == "string"
+			and Config.Stages[data.StageId] ~= nil and typeof(data.Members) == "table"
+		if not RunService:IsStudio() then
+			if not isReservedServer or not fromLobby then
+				player:Kick("Stages are started from the lobby: press PLAY there.")
+				return
+			end
+			if not table.find(data.Members, player.UserId) or (info and data.RoomKey ~= info.RoomKey) then
+				player:Kick("This stage belongs to another lobby.")
+				return
+			end
+		end
+		if not info then
+			if fromLobby then
+				info = { RoomKey = data.RoomKey, StageId = data.StageId, HostId = data.HostId, Members = data.Members }
+				returnPlaceId = typeof(data.ReturnPlaceId) == "number" and data.ReturnPlaceId or nil
+			else
+				info = { StageId = Config.DefaultStage, HostId = player.UserId, Members = {}, Direct = true }
+			end
+			firstJoin = os.clock()
+		end
+		if info.Direct and workspace:GetAttribute("State") == "Menu" and not table.find(info.Members, player.UserId) then
+			table.insert(info.Members, player.UserId)
+		end
+		tryStart()
+	end)
+	task.spawn(function()
+		while true do
+			task.wait(1)
+			tryStart()
+		end
+	end)
+end
 
 -- ===== Main loop =====
 RunService.Heartbeat:Connect(function(dt)

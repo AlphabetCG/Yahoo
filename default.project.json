@@ -97,6 +97,7 @@
           "BinaryString": ""
         },
         "SignalBehavior": "Deferred",
+        "StreamingEnabled": false,
         "StreamOutBehavior": "Opportunistic",
         "StreamingIntegrityMode": "PauseOutsideLoadedArea",
         "WorldPivotData": {
@@ -129,7 +130,8 @@
       "$attributes": {
         "Rojo_Target_CurrentCamera": "46192e20fd30751c0af0f28d000003f2"
       },
-      "$path": "src/Workspace"
+      "$path": "src/Workspace",
+      "$ignoreUnknownInstances": true
     }
   }
 }

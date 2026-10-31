@@ -46,11 +46,19 @@ Config.PlayerColors = {
 
 -- ===== Places =====
 -- The same scripts run in both places of the experience; they check game.PlaceId to know which one this is.
---   Lobby = the start place (menu, inventory, summon, lobbies). Match = where stages are played.
--- Set Match to 0 to play every stage inside the lobby server (that is also what Studio play tests do).
+--   Lobby = the start place (Yahoo): menus, inventory, summon, lobby rooms. No map: START always
+--           teleports the room to the Match place. (Synced with default.project.json.)
+--   Match = the 2nd place: the map and the stages. (Synced with match.project.json.)
+-- Set Match to 0 to keep everything in one place (needs the map in that place: use match.project.json).
 Config.Places = {
-	Match = 138398273175866,
+	Match = 114181242148498,
 }
+
+-- "Lobby", "Match", or "Single" (Config.Places.Match = 0: menus and stages in the same place)
+function Config.PlaceRole()
+	if Config.Places.Match == 0 then return "Single" end
+	return game.PlaceId == Config.Places.Match and "Match" or "Lobby"
+end
 
 -- ===== Play: modes > maps > stages =====
 -- PLAY opens: Select Mode > Select Map > Select Stage > Create Lobby (Public / Friends / Invite) or

@@ -14,6 +14,8 @@ local playerGui = player:WaitForChild("PlayerGui")
 local Config = require(ReplicatedStorage:WaitForChild("Config"))
 local PixelArt = require(ReplicatedStorage:WaitForChild("PixelArt"))
 local WorldView = require(ReplicatedStorage:WaitForChild("WorldView"))
+local PLACE_ROLE = Config.PlaceRole() -- "Lobby" (menus only), "Match" (stages) or "Single"
+local IS_MATCH_PLACE = PLACE_ROLE == "Match"
 
 -- If the server scripts fail to start, the remotes below never appear and the screen would stay
 -- empty. After 10 seconds, say so (and what is missing) instead of showing nothing.
@@ -32,8 +34,8 @@ task.delay(10, function()
 	text.Font = Enum.Font.Arcade
 	text.TextSize = 24
 	text.TextWrapped = true
-	text.Text = "Waiting for the server... (missing: " .. tostring(waitingFor) .. ")\n"
-		.. "The server script probably stopped with an error: check View > Output in Studio."
+	text.Text = "The game didn't finish loading (stuck at: " .. tostring(waitingFor) .. ")\n"
+		.. "Check the logs: View > Output in Studio, or press F9 in the game (Client and Server tabs)."
 	text.Parent = startupGui
 	startupGui.Parent = playerGui
 end)
@@ -79,8 +81,7 @@ for _, name in ipairs({
 }) do
 	Remote[name] = waitRemote(remotes, name)
 end
-waitingFor = nil
-if startupGui then startupGui:Destroy() end
+waitingFor = "loading the UI" -- cleared at the very end of this script
 
 -- the player's saved data (settings, gems, units, items); filled in by the server
 -- profile.Units = { [uid] = { Id, Name, Level, ... } }: one entry per owned unit
@@ -249,7 +250,12 @@ local worldGui = make("ScreenGui", {
 	DisplayOrder = 0,
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 }, playerGui)
-WorldView.start(worldGui, { rightInset = SHOP_W, topInset = 176, bottomInset = 156 })
+-- the Lobby place has no map (stages are played in the Match place), so nothing to draw there
+if PLACE_ROLE ~= "Lobby" then
+	waitingFor = "drawing the map: this place has no Workspace.Waypoints. Sync it with match.project.json (Rojo port 34873) and publish"
+	WorldView.start(worldGui, { rightInset = SHOP_W, topInset = 176, bottomInset = 156 })
+	waitingFor = "loading the UI"
+end
 
 -- ===== Map camera: mouse wheel zooms; right/middle-drag, WASD / arrow keys or a finger drag pan; C re-centers
 local DRAG_THRESHOLD = 6   -- pixels a right-drag must move before it counts as panning (a plain right-click cancels)
@@ -1187,7 +1193,7 @@ label(settingsPanel, {
 })
 
 local mainView = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, settingsPanel)
--- AUTO SKIP shows MY choice; the line under it shows what the match uses and how many have it ON
+-- AUTO SKIP shows MY choice; the line under it explains what it does
 local autoSkipButton = pixelButton(mainView, "AUTO SKIP: ON", UDim2.fromOffset(330, 54), UDim2.new(0.5, 0, 0, 94), 22)
 local autoSkipTeamLabel = label(mainView, {
 	AnchorPoint = Vector2.new(0.5, 0),
@@ -1308,18 +1314,18 @@ local function refreshHud()
 	local speed = workspace:GetAttribute("GameSpeed") or 1
 	speedButton.Text = "SPEED  X" .. speed -- set by the host
 	setButtonColor(speedButton, SPEED_COLORS[speed] or BTN)
-	local auto = workspace:GetAttribute("AutoSkip")
+	-- Auto Skip ON = this player skips every wave by themselves (once most of it is out);
+	-- OFF = they press SKIP. The next round starts early once every player skips.
 	local mineAuto = player:GetAttribute("VoteAutoSkip") == true
 	autoSkipButton.Text = mineAuto and "AUTO SKIP: ON" or "AUTO SKIP: OFF"
 	setButtonColor(autoSkipButton, mineAuto and GREEN_BTN or rgb(150, 80, 70))
-	autoSkipTeamLabel.Text = multi
-		and ("MATCH: %s   (%d/%d PLAYERS ON)"):format(auto and "ON" or "OFF", workspace:GetAttribute("AutoSkipVotes") or 0, voters)
-		or ""
+	autoSkipTeamLabel.Text = mineAuto and "You skip each wave once most of it is out"
+		or "Press SKIP next to the round timer to move on"
 
-	-- skip wave: while the next round is counting down
+	-- skip wave: for players with Auto Skip OFF (Auto Skip ON players skip by themselves and are counted)
 	local myVoteSkip = player:GetAttribute("VoteSkip") == true
 	skipWaveButton.Visible = currentState() == "Playing" and workspace:GetAttribute("Phase") == "Match"
-		and inMatch and cd > 0 and round >= 1 and not lastRound
+		and inMatch and not mineAuto and round >= 1 and not lastRound
 	skipWaveButton.Text = multi and ("SKIP %d/%d"):format(workspace:GetAttribute("SkipVotes") or 0, voters) or "SKIP"
 	setButtonColor(skipWaveButton, myVoteSkip and GREEN_BTN or BTN)
 
@@ -1906,6 +1912,7 @@ end
 local inventoryDim, refreshInventory, closeInventory = buildInventory()
 
 -- PLAY: mode > map > stage > lobby (PlayMenu module next to this script)
+waitingFor = "the PlayMenu module"
 local playMenu = require(script.Parent:WaitForChild("PlayMenu")).init({
 	Config = Config, Remote = Remote, player = player, popupGui = popupGui,
 	make = make, label = label, pixelButton = pixelButton, pixelPanel = pixelPanel,
@@ -1916,6 +1923,8 @@ local playMenu = require(script.Parent:WaitForChild("PlayMenu")).init({
 		GREEN_BTN = GREEN_BTN, GREEN_EDGE = GREEN_EDGE, RED_BTN = RED_BTN, RED_EDGE = RED_EDGE, rgb = rgb,
 	},
 })
+
+waitingFor = "loading the UI"
 
 -- saved data from the server
 local function applyProfile(p)
@@ -1941,9 +1950,26 @@ Remote.StageRewards.OnClientEvent:Connect(function(rewards)
 	if overlay.Visible then rewardsLabel.Text = rewardsText(rewards) end
 end)
 
+-- Match place: there is no main menu. Until the stage starts, show a waiting screen.
+local function buildWaitingScreen()
+	local gui = make("ScreenGui", { Name = "TDWaitingGui", ResetOnSpawn = false, IgnoreGuiInset = true, DisplayOrder = 3, Enabled = false }, playerGui)
+	local back = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = rgb(20, 22, 34), BorderSizePixel = 0 }, gui)
+	label(back, {
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.45), Size = UDim2.fromOffset(700, 60),
+		Text = "GETTING READY...", TextSize = 40, TextColor3 = GOLD,
+	})
+	label(back, {
+		AnchorPoint = Vector2.new(0.5, 0.5), Position = UDim2.fromScale(0.5, 0.55), Size = UDim2.fromOffset(700, 30),
+		Text = "Waiting for the rest of your lobby", TextSize = 20, TextColor3 = TEXT_DIM,
+	})
+	return gui
+end
+local waitingGui = buildWaitingScreen()
+
 local function refreshState()
 	local state = currentState()
-	menuGui.Enabled = state == "Menu"
+	menuGui.Enabled = state == "Menu" and not IS_MATCH_PLACE
+	waitingGui.Enabled = state == "Menu" and IS_MATCH_PLACE
 	hudGui.Enabled = state ~= "Menu"
 	if state ~= "Menu" then closeInventory() end
 	playMenu.onState(state)
@@ -1958,8 +1984,8 @@ local function refreshState()
 end
 
 workspace:GetAttributeChangedSignal("State"):Connect(refreshState)
-for _, attr in ipairs({ "Lives", "Round", "TotalRounds", "Countdown", "GameSpeed", "AutoSkip", "Phase", "PrepLeft", "EndReason", "WaveState", "WaveSpawned", "WaveCount",
-	"Voters", "AutoSkipVotes", "SkipVotes", "SurrenderVotes" }) do
+for _, attr in ipairs({ "Lives", "Round", "TotalRounds", "Countdown", "GameSpeed", "Phase", "PrepLeft", "EndReason", "WaveState", "WaveSpawned", "WaveCount",
+	"Voters", "SkipVotes", "SurrenderVotes" }) do
 	workspace:GetAttributeChangedSignal(attr):Connect(refreshHud)
 end
 for _, attr in ipairs({ "Money", "InMatch", "VoteAutoSkip", "VoteSkip", "VoteSurrender" }) do
@@ -1971,7 +1997,11 @@ local function refreshHostButtons()
 	local host = isHost()
 	retryButton.Text = host and "RETRY" or "WAITING..."
 	setButtonColor(retryButton, host and GREEN_BTN or GREY_BTN)
-	menuButton.Text = host and "MAIN MENU" or "HOST DECIDES"
+	if IS_MATCH_PLACE then
+		menuButton.Text = "BACK TO LOBBY" -- anyone can leave once the stage is over
+	else
+		menuButton.Text = host and "MAIN MENU" or "HOST DECIDES"
+	end
 	startMatchButton.Text = host and "START MATCH" or "HOST STARTS"
 	setButtonColor(startMatchButton, host and GREEN_BTN or GREY_BTN)
 end
@@ -1988,7 +2018,7 @@ retryButton.MouseButton1Click:Connect(function()
 	if isHost() then Remote.Retry:FireServer() end
 end)
 menuButton.MouseButton1Click:Connect(function()
-	if isHost() then Remote.ReturnToMenu:FireServer() end
+	if IS_MATCH_PLACE or isHost() then Remote.ReturnToMenu:FireServer() end
 end)
 -- speed: the host sets it. auto skip: change MY choice (the match goes with the majority)
 speedButton.MouseButton1Click:Connect(function()
@@ -2102,3 +2132,6 @@ task.spawn(function()
 end)
 
 refreshState()
+-- fully loaded: no "didn't finish loading" message
+waitingFor = nil
+if startupGui then startupGui:Destroy() end

@@ -32,7 +32,7 @@ Then open the place in Roblox Studio and click **Connect** in the Rojo plugin.
 | **Match flow** | **Prep** phase (60 s, or the host presses START MATCH) → the stage's rounds (or endless in Infinite) → Victory / Game Over → Retry (same stage, same players) or Main Menu. |
 | **Stages** | `Config.Stages`: mode, map, difficulty (Normal / Hard / Nightmare: enemy health, speed and reward multipliers), rounds (0 = endless) and rules (faster / tougher enemies, start money, allowed rarities, a boss every N rounds, Raid escorts). 1 map for now (`Config.Maps`). |
 | **Waves** | Enemy count = `6 + 3.2 × round` (54 in round 15). Each enemy spawns as tier 1–5, which fixes its speed and base HP; health grows 9 % per round. Its color steps down through the tiers as it loses health. Enemies walk the path center in single file, keeping `EnemySpacing` studs apart: a faster enemy queues behind a slower one instead of overlapping it. Bosses (200 HP × the stage's boss multiplier) close the last round, or every N rounds in Infinite / Raid; each later boss is 40 % tougher. |
-| **Auto Skip** | **ON**: the next round starts once 60–70 % of the current wave has spawned. **OFF**: no timer while the wave spawns (the HUD shows `WAVE r  x/y`); after the last enemy appears, a 20 s timer starts and the next round begins when it runs out or every enemy is gone. The match follows the host's setting. |
+| **Auto Skip** | Each player's own setting (ON by default). **ON**: you skip the wave by yourself once 60–70 % of it has spawned. **OFF**: no timer while the wave spawns (`WAVE r  x/y`); you can press **SKIP**; after the last enemy appears a 20 s timer starts. The next round begins when every player skips, the timer runs out, or every enemy is gone. |
 | **Game speed** | x1 / x2 / x3 for everyone. The stage timer runs in real time. |
 | **Units** | **Herobrine** (Rare), **Zaruto**, **Fluffy**, **Ichitoe** (Epic) and **Voidseer** (Legendary). Each has 5 in-match **Upgrade** levels (UPGRADE buys one, MAX buys as many as you can afford; units show `UP1`–`UP5`). The last levels add an ability: Burn (damage over time) or Slow. 6 targeting modes (First / Last / Strongest / Weakest / Closest / None), selling at a 50 % refund. Each player can have up to 3 copies of each unit on the map (`DefaultPlaceLimit`; a unit can set its own `PlaceLimit`). |
 | **Money** | Per player, but **shared income**: every whole HP removed (`RewardPerPop` 2, burn included) and every round bonus (160, +30 per round) pays **every** player in the match the same amount, scaled by party size (`Config.TeamIncome`: 1.0 / 0.65 / 0.5 / 0.42). A solo full clear earns about 13,200. `Config.DebugEconomy` prints income by source at stage end. |
@@ -42,7 +42,7 @@ Then open the place in Roblox Studio and click **Connect** in the Rojo plugin.
 | **Inventory & loadout** | **Loadout** of 6 slots: only equipped units appear in the in-match shop (keys 1–6). **Units** tab: one card per copy, sortable (rarity / level / newest) and filterable by rarity; a detail panel to equip / unequip, feed Wisp Essence, lock, and sell for **Gold** (Rare 5 · Epic 15 · Legendary 40; locked and equipped units can't be sold). Gold is a separate currency with no use yet (#50). **Materials** tab. |
 | **Unit leveling** | Each copy has a saved level (cap by rarity: Rare 30, Epic 40, Legendary 50, Mythic 60). +3 % damage and +0.1 range per level. XP from stages and from feeding Wisp Essence (10 XP each). Separate from in-match upgrades. |
 | **Settings** | Auto Skip, health bars (hover / always), resume, surrender. |
-| **Party, host & votes** | One server = one match for up to 4 players (`Config.MaxPartySize`); the main menu shows the party. The player in the server longest is the **host**: only the host starts the stage, starts the match early, sets the **speed**, retries and returns to the menu. **Votes**: Auto Skip (each player sets their own in Settings, ON by default; the match uses the majority, ties → host), Skip Wave and Surrender (everyone; solo = instant). Every player has a **colour** (`Config.PlayerColors`): their units are outlined in it and it shows in the party panel. Players who join mid-stage spectate and join at the next round with the team's money. Enemy HP +35 % per extra player. A player who leaves takes their units with them. |
+| **Party, host & votes** | One server = one match for up to 4 players (`Config.MaxPartySize`); the main menu shows the party. The player in the server longest is the **host**: only the host starts the stage, starts the match early, sets the **speed**, retries and returns to the menu. **Skipping waves**: the next round starts early once **every** player skips. A player with **Auto Skip ON** (their own setting, ON by default) skips by themselves once 60–70 % of the wave is out; a player with it OFF presses **SKIP** next to the round timer. Otherwise a 20 s timer starts after the last enemy spawns (or the wave is wiped). **Surrender** needs everyone (solo = instant). Every player has a **colour** (`Config.PlayerColors`): their units are outlined in it and it shows in the party panel. Players who join mid-stage spectate and join at the next round with the team's money. Enemy HP +35 % per extra player. A player who leaves takes their units with them. |
 | **Rendering** | Pixel map with path, cave and castle. Sprites with idle and recoil animations, health bars, shot bolts and particles, a placement ghost with a range ring, mouse-wheel zoom, and panning (right/middle-drag, WASD or arrow keys, one-finger drag on touch; `C` re-centers). |
 
 ---
@@ -69,8 +69,9 @@ src/
   ServerStorage/
     Eclipse Animator Saves/   Plugin data (not game code)
   Workspace/
-    Waypoints/1..10           The enemy path. Move these parts in Studio to reshape it
     Towers/, Enemies/         Runtime folders filled by the server
+  Map/
+    Waypoints/1..10           The enemy path (Match place only, see match.project.json)
 ```
 
 ---
@@ -91,7 +92,7 @@ src/
 | `StageTime`, `StageSync` | Stage clock. The client extrapolates between syncs |
 | `EndReason` | `Clear` · `Defeat` · `Surrender` |
 | `HostId` | UserId of the host (the player who controls the match flow) |
-| `Voters`, `AutoSkipVotes`, `SkipVotes`, `SurrenderVotes` | Vote totals for the HUD. Each player's own vote is a player attribute (`VoteAutoSkip`, `VoteSkip`, `VoteSurrender`); `InMatch` marks the players in the stage; `PlayerColor` is their colour index |
+| `Voters`, `SkipVotes`, `SurrenderVotes` | Vote totals for the HUD. Each player's own vote is a player attribute (`VoteAutoSkip`, `VoteSkip`, `VoteSurrender`); `InMatch` marks the players in the stage; `PlayerColor` is their colour index |
 | `WaveState`, `WaveSpawned`, `WaveCount` | `Spawning` · `Clearing` (Auto Skip OFF timer) · `""`, plus spawn progress of the current wave |
 
 Other state lives on other objects:
@@ -107,7 +108,7 @@ Other state lives on other objects:
 | `LobbyCreate`, `LobbyJoin`, `LobbyMatchmake`, `LobbyInvite`, `LobbyStart` | Function | Lobby rooms (server module `Lobby`) |
 | `LobbyLeave`, `LobbySetPrivacy`, `LobbyRefresh` / `LobbyState`, `LobbyInvited` | Event | Lobby rooms: requests / what each client sees |
 | `Surrender`, `SkipWave` | Event | Votes (toggle); pass when every player in the match agrees |
-| `SetSpeed`, `SetAutoSkip`, `SetTargeting` | Event | Speed: host only. Auto Skip: the player's own choice (majority decides). Targeting: per unit |
+| `SetSpeed`, `SetAutoSkip`, `SetTargeting` | Event | Speed: host only. Auto Skip: the player's own setting. Targeting: per unit |
 | `PlaceTower(unitId, pos)`, `UpgradeTower(model, all)`, `SellTower` | Function | Unit actions (validated on the server). `unitId` is a key of `profile.Units`; `all = true` buys as many upgrade levels as affordable |
 | `Shot` | UnreliableEvent | Tells clients to draw a shot |
 | `GetProfile`, `Summon` | Function | Profile data |
@@ -129,6 +130,26 @@ Other state lives on other objects:
 
 ---
 
+## Two places: Lobby and Match
+
+The experience has two places. The scripts are shared; `Config.PlaceRole()` checks `game.PlaceId` to know where they run.
+
+| Place | Rojo project | What it has |
+|---|---|---|
+| **Lobby**: *Yahoo* (start place) | `default.project.json` | Menus only: main menu, inventory, summon, PLAY flow and lobby rooms. **No map.** START always teleports the room to its own reserved Match server |
+| **Match**: *Match* place under Yahoo (`Config.Places.Match` = 114181242148498) | `match.project.json` (adds `src/Map/Waypoints`) | The map and the stages. Waits for the room's players (max 20 s), plays the stage from the TeleportData; **BACK TO LOBBY** sends each player back. Only the room's members can be there: joining the place directly, following a friend in, or arriving with another room's key gets you kicked (Studio is exempt) |
+
+**Syncing and publishing:**
+1. **Yahoo:** `rojo serve` (default project), connect from Yahoo in Studio, then **Publish**. Rojo removes the map from Yahoo, since it is no longer in this project.
+2. **2nd place:** `rojo serve match.project.json --port 34873`, open the 2nd place, connect the Rojo plugin to port **34873**, then **Publish**.
+3. Both servers can run at the same time on their own ports.
+
+**Testing:**
+- **Stages in Studio:** open the **2nd place** and press Play. It starts Story Stage 1 by itself. When it ends, BACK TO LOBBY (host) restarts it.
+- **The lobby in Studio:** menus, inventory and lobby rooms work. START says teleports only work in the published game.
+- **Teleports:** test in the live game or a private server.
+- **One place for everything** (development only): set `Config.Places.Match = 0` and sync `match.project.json`.
+
 ## Tweaking the game
 
 Nearly everything is in [Config.luau](src/ReplicatedStorage/Config.luau):
@@ -143,7 +164,7 @@ Nearly everything is in [Config.luau](src/ReplicatedStorage/Config.luau):
 - **Waves and economy:** `EnemiesBase`, `EnemiesPerRound`, `HpPerRound`, `WaveClearTime`, `EnemySpacing`, `RewardPerPop`, `RoundBonus`, `StartMoney`, `DefaultPlaceLimit`, and `Tiers[*].Speed` / `HP`.
 - **Upgrade abilities:** add `Ability = { Kind = "Burn", Dps, Duration }` or `{ Kind = "Slow", Pct, Duration }` to a `Levels[i]` entry.
 - **Unit leveling:** `Config.Leveling` (XP per stage, XP per Essence, damage / range per level), `Config.XpToNext(level)`, level caps in `Config.Rarities[*].MaxLevel`.
-- **Path:** move or add the `Workspace.Waypoints` parts, which are numbered in order.
+- **Path:** move or add the `Workspace.Waypoints` parts in the 2nd place (`src/Map/Waypoints`), which are numbered in order.
 
 ---
 
@@ -151,6 +172,6 @@ Nearly everything is in [Config.luau](src/ReplicatedStorage/Config.luau):
 
 These are all covered in the spec:
 
-- **Lobby and match share a place.** Splitting them into separate places with teleports (#19) needs a second place in the universe.
+- **Teleports only work in the published game.** In Studio, test stages by opening the 2nd place.
 - **Little content.** There are five units, one enemy type plus the boss, and one map.
 - **x3 speed is free.** It is planned as a gamepass perk.
