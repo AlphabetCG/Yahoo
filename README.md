@@ -126,6 +126,11 @@ Other state lives on other objects:
 Nearly everything is in [Config.luau](src/ReplicatedStorage/Config.luau):
 
 - **New unit:** add a sprite to `PixelArt` (`defs.<Name>`) and an entry to `Config.Units`. Then add it to `Config.UnitOrder` to show it in the shop, and to `Config.Summon.Pool` to make it summonable.
+- **Unit image instead of pixel grid:** add `Image = { Id, Size, FrameSize, Frames }` to the unit in `Config.Units` (format described above `Config.UnitOrder`). As soon as `Id` is set, the map, shop, inventory and placement preview use the image. Leave `Id = ""` to keep the pixel grid. A unit with neither an image nor a grid shows a grey "?" placeholder.
+  1. Draw the character facing **right** on a transparent PNG. For a sprite sheet, put the frames side by side, all the same size (e.g. idle, then attack).
+  2. Upload it in Studio: **View → Asset Manager → Bulk Import** (or the Creator Dashboard → Development Items → Images).
+  3. Right-click the image → **Copy Asset ID** and paste it as `Id = "rbxassetid://<number>"`. Use the *image* id, not a decal id.
+  4. Set `Size` (on-screen size in art pixels, around 14–20 × 18–24 to match the other units) and `FrameSize` (the size of one frame in the file, ideally an exact multiple of `Size`).
 - **New material:** add it to `Config.Materials` and `Config.MaterialOrder`. Grant it with `PlayerData.AddMaterial(player, key, n)`.
 - **Waves and economy:** `EnemiesBase`, `EnemiesPerRound`, `HpPerRound`, `WaveClearTime`, `EnemySpacing`, `RewardPerPop`, `RoundBonus`, `StartMoney`, `DefaultPlaceLimit`, and `Tiers[*].Speed` / `HP`.
 - **Upgrade abilities:** add `Ability = { Kind = "Burn", Dps, Duration }` or `{ Kind = "Slow", Pct, Duration }` to a `Levels[i]` entry.
