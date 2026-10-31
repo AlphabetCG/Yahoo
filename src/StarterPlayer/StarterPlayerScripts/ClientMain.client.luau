@@ -1192,7 +1192,7 @@ label(settingsPanel, {
 })
 
 local mainView = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, settingsPanel)
--- AUTO SKIP shows MY choice; the line under it shows what the match uses and how many have it ON
+-- AUTO SKIP shows MY choice; the line under it explains what it does
 local autoSkipButton = pixelButton(mainView, "AUTO SKIP: ON", UDim2.fromOffset(330, 54), UDim2.new(0.5, 0, 0, 94), 22)
 local autoSkipTeamLabel = label(mainView, {
 	AnchorPoint = Vector2.new(0.5, 0),
@@ -1313,18 +1313,18 @@ local function refreshHud()
 	local speed = workspace:GetAttribute("GameSpeed") or 1
 	speedButton.Text = "SPEED  X" .. speed -- set by the host
 	setButtonColor(speedButton, SPEED_COLORS[speed] or BTN)
-	local auto = workspace:GetAttribute("AutoSkip")
+	-- Auto Skip ON = this player skips every wave by themselves (once most of it is out);
+	-- OFF = they press SKIP. The next round starts early once every player skips.
 	local mineAuto = player:GetAttribute("VoteAutoSkip") == true
 	autoSkipButton.Text = mineAuto and "AUTO SKIP: ON" or "AUTO SKIP: OFF"
 	setButtonColor(autoSkipButton, mineAuto and GREEN_BTN or rgb(150, 80, 70))
-	autoSkipTeamLabel.Text = multi
-		and ("MATCH: %s   (%d/%d PLAYERS ON)"):format(auto and "ON" or "OFF", workspace:GetAttribute("AutoSkipVotes") or 0, voters)
-		or ""
+	autoSkipTeamLabel.Text = mineAuto and "You skip each wave once most of it is out"
+		or "Press SKIP next to the round timer to move on"
 
-	-- skip wave: while the next round is counting down
+	-- skip wave: for players with Auto Skip OFF (Auto Skip ON players skip by themselves and are counted)
 	local myVoteSkip = player:GetAttribute("VoteSkip") == true
 	skipWaveButton.Visible = currentState() == "Playing" and workspace:GetAttribute("Phase") == "Match"
-		and inMatch and cd > 0 and round >= 1 and not lastRound
+		and inMatch and not mineAuto and round >= 1 and not lastRound
 	skipWaveButton.Text = multi and ("SKIP %d/%d"):format(workspace:GetAttribute("SkipVotes") or 0, voters) or "SKIP"
 	setButtonColor(skipWaveButton, myVoteSkip and GREEN_BTN or BTN)
 
@@ -1980,8 +1980,8 @@ local function refreshState()
 end
 
 workspace:GetAttributeChangedSignal("State"):Connect(refreshState)
-for _, attr in ipairs({ "Lives", "Round", "TotalRounds", "Countdown", "GameSpeed", "AutoSkip", "Phase", "PrepLeft", "EndReason", "WaveState", "WaveSpawned", "WaveCount",
-	"Voters", "AutoSkipVotes", "SkipVotes", "SurrenderVotes" }) do
+for _, attr in ipairs({ "Lives", "Round", "TotalRounds", "Countdown", "GameSpeed", "Phase", "PrepLeft", "EndReason", "WaveState", "WaveSpawned", "WaveCount",
+	"Voters", "SkipVotes", "SurrenderVotes" }) do
 	workspace:GetAttributeChangedSignal(attr):Connect(refreshHud)
 end
 for _, attr in ipairs({ "Money", "InMatch", "VoteAutoSkip", "VoteSkip", "VoteSurrender" }) do

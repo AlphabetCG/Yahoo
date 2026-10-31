@@ -55,8 +55,8 @@ PlayerData.init(remotes)
 -- starts the stage, starts the match early, retries and goes back to the menu.
 -- starts the stage, starts the match early, sets the game speed, retries and goes back to the menu.
 -- The rest is voted on by the players in the match (see recomputeVotes):
---   Auto Skip (majority, ties -> host), Skip Wave and Surrender (everyone). Each player's vote is a
---   player attribute (VoteAutoSkip / VoteSkip / VoteSurrender); totals are published on workspace.
+--   Skip Wave and Surrender (everyone has to agree; Auto Skip ON players skip by themselves).
+--   Each player's vote is a player attribute (VoteAutoSkip / VoteSkip / VoteSurrender); totals are on workspace.
 local joinOrder = {}
 local recomputeVotes -- defined below (needs the match state)
 
@@ -184,7 +184,8 @@ local pendingHits = {}    -- shots in flight: { Enemy, Damage, Owner, Due } (dam
 local towers = {}         -- list of tower entries (see createTower)
 local towerByModel = {}   -- Model -> tower entry
 local matchRequested = false -- set when the host presses START MATCH during the prep phase
-local skipRequested = false  -- set when everyone in the match voted to skip the wave
+local skipRequested = false  -- set when everyone in the match agreed to skip the wave
+local autoSkipReady = false  -- the wave reached its auto-skip point: players with Auto Skip ON count as skipping
 local session = 0         -- changes every new game so old round loops stop themselves
 local stageTime = 0       -- real seconds spent on this stage
 local stageSyncTimer = 0
@@ -931,7 +932,9 @@ local function startGame(stageId, members, host)
 			r += 1
 			workspace:SetAttribute("Round", r)
 			skipRequested = false
+			autoSkipReady = false
 			for _, p in ipairs(Players:GetPlayers()) do p:SetAttribute("VoteSkip", false) end
+			recomputeVotes()
 			admitPlayers() -- spectators who joined during the last round join now
 			if r > 1 then
 				-- bonus for reaching the next round (shared like pops)
@@ -939,35 +942,36 @@ local function startGame(stageId, members, host)
 			end
 			progress = spawnRound(r)
 
-			-- AUTO SKIP ON : the next round starts once 60-70% of this wave's enemies have appeared
-			--                (the rest keep spawning during the next round).
-			-- AUTO SKIP OFF: no timer while the wave spawns. Once its last enemy has appeared a
-			--                Config.WaveClearTime timer starts; the next round begins when it runs out
-			--                or when every enemy on the map is gone.
-			-- The setting is read once per round, so toggling it mid-wave applies from the next round.
+			-- When does the next round start? As soon as EVERY player in the match skips:
+			--   * a player with Auto Skip ON skips by themselves once 60-70% of the wave has appeared
+			--     (the rest keep spawning during the next round)
+			--   * a player with Auto Skip OFF presses SKIP
+			-- Otherwise: once the wave's last enemy has appeared, a Config.WaveClearTime timer starts and the
+			-- next round begins when it runs out or every enemy on the map is gone.
+			-- Solo this is exactly "Auto Skip ON: next round at 60-70%, OFF: timer (or press SKIP)".
 			if total == 0 or r < total then
 				local thisWave = progress
+				local fraction = Config.SkipSpawnMin + math.random() * (Config.SkipSpawnMax - Config.SkipSpawnMin)
+				local need = math.max(1, math.ceil(thisWave.Count * fraction))
+				local deadline = nil
 				workspace:SetAttribute("WaveState", "Spawning")
-				if workspace:GetAttribute("AutoSkip") then
-					local fraction = Config.SkipSpawnMin + math.random() * (Config.SkipSpawnMax - Config.SkipSpawnMin)
-					local need = math.max(1, math.ceil(thisWave.Count * fraction))
-					while thisWave.Spawned < need and not skipRequested do
-						local remaining = (need - thisWave.Spawned) * thisWave.Interval
-						workspace:SetAttribute("Countdown", math.max(1, math.ceil(remaining)))
-						if not gameWait(0.25, mySession) then return end
+				workspace:SetAttribute("Countdown", 0)
+				while not skipRequested do
+					if not autoSkipReady and thisWave.Spawned >= need then
+						autoSkipReady = true
+						recomputeVotes() -- Auto Skip ON players now count as skipping
 					end
-				else
-					workspace:SetAttribute("Countdown", 0)
-					while thisWave.Spawned < thisWave.Count do
-						if not gameWait(0.25, mySession) then return end
-					end
-					workspace:SetAttribute("WaveState", "Clearing")
-					local deadline = gameTime + Config.WaveClearTime
-					while gameTime < deadline and #enemies > 0 and not skipRequested do
+					if thisWave.Spawned >= thisWave.Count then
+						if not deadline then
+							deadline = gameTime + Config.WaveClearTime
+							workspace:SetAttribute("WaveState", "Clearing")
+						end
+						if gameTime >= deadline or #enemies == 0 then break end
 						workspace:SetAttribute("Countdown", math.max(1, math.ceil(deadline - gameTime)))
-						if not gameWait(0.25, mySession) then return end
 					end
+					if not gameWait(0.25, mySession) then return end
 				end
+				autoSkipReady = false
 			end
 		end
 
@@ -1158,29 +1162,20 @@ local function voters()
 end
 
 -- Works out the outcome of every vote and publishes the totals:
--- workspace Voters, AutoSkipVotes (players with it ON), SkipVotes, SurrenderVotes.
+-- workspace Voters, SkipVotes (players skipping this wave: pressed SKIP, or Auto Skip ON once the wave
+-- reached its auto-skip point), SurrenderVotes.
 recomputeVotes = function()
 	local list = voters()
 	local n = #list
 	local playing = workspace:GetAttribute("State") == "Playing"
 
-	-- auto skip: majority, a tie follows the host's vote
-	local on = 0
-	for _, p in ipairs(list) do
-		if p:GetAttribute("VoteAutoSkip") then on += 1 end
-	end
-	local host = joinOrder[1]
-	local auto = on * 2 > n or (on * 2 == n and host ~= nil and host:GetAttribute("VoteAutoSkip") == true)
-	workspace:SetAttribute("AutoSkip", auto)
-
 	-- skip wave / surrender: everyone has to agree
 	local skip, surrender = 0, 0
 	for _, p in ipairs(list) do
-		if p:GetAttribute("VoteSkip") then skip += 1 end
+		if p:GetAttribute("VoteSkip") or (autoSkipReady and p:GetAttribute("VoteAutoSkip")) then skip += 1 end
 		if p:GetAttribute("VoteSurrender") then surrender += 1 end
 	end
 	workspace:SetAttribute("Voters", n)
-	workspace:SetAttribute("AutoSkipVotes", on)
 	workspace:SetAttribute("SkipVotes", skip)
 	workspace:SetAttribute("SurrenderVotes", surrender)
 
@@ -1192,8 +1187,8 @@ recomputeVotes = function()
 	end
 end
 
--- Auto skip: ON = next round starts when ~60-70% of the wave has appeared,
---            OFF = next round only starts when the wave's own timer runs out (or the wave is wiped)
+-- Auto Skip (each player's own setting): ON = skip by yourself once ~60-70% of the wave has appeared,
+-- OFF = press SKIP (or wait for the timer). The round moves on early when every player skips.
 setAutoSkipRemote.OnServerEvent:Connect(function(player, value)
 	if typeof(value) ~= "boolean" or not RateLimit.allow(player, "SetAutoSkip", 2) then return end
 	PlayerData.SetSetting(player, "AutoSkip", value) -- remembered between sessions
@@ -1210,7 +1205,6 @@ setSpeedRemote.OnServerEvent:Connect(function(player, speed)
 	workspace:SetAttribute("GameSpeed", speed)
 end)
 
-workspace:SetAttribute("AutoSkip", Config.AutoSkipDefault)
 recomputeVotes()
 
 -- ===== Match place: play the stage the lobby sent =====
