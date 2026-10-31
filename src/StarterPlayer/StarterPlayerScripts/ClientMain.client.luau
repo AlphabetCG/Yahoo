@@ -34,8 +34,8 @@ task.delay(10, function()
 	text.Font = Enum.Font.Arcade
 	text.TextSize = 24
 	text.TextWrapped = true
-	text.Text = "Waiting for the server... (missing: " .. tostring(waitingFor) .. ")\n"
-		.. "The server script probably stopped with an error: check View > Output in Studio."
+	text.Text = "The game didn't finish loading (stuck at: " .. tostring(waitingFor) .. ")\n"
+		.. "Check the logs: View > Output in Studio, or press F9 in the game (Client and Server tabs)."
 	text.Parent = startupGui
 	startupGui.Parent = playerGui
 end)
@@ -81,8 +81,7 @@ for _, name in ipairs({
 }) do
 	Remote[name] = waitRemote(remotes, name)
 end
-waitingFor = nil
-if startupGui then startupGui:Destroy() end
+waitingFor = "loading the UI" -- cleared at the very end of this script
 
 -- the player's saved data (settings, gems, units, items); filled in by the server
 -- profile.Units = { [uid] = { Id, Name, Level, ... } }: one entry per owned unit
@@ -253,7 +252,9 @@ local worldGui = make("ScreenGui", {
 }, playerGui)
 -- the Lobby place has no map (stages are played in the Match place), so nothing to draw there
 if PLACE_ROLE ~= "Lobby" then
+	waitingFor = "drawing the map (Workspace.Waypoints)"
 	WorldView.start(worldGui, { rightInset = SHOP_W, topInset = 176, bottomInset = 156 })
+	waitingFor = "loading the UI"
 end
 
 -- ===== Map camera: mouse wheel zooms; right/middle-drag, WASD / arrow keys or a finger drag pan; C re-centers
@@ -1911,6 +1912,7 @@ end
 local inventoryDim, refreshInventory, closeInventory = buildInventory()
 
 -- PLAY: mode > map > stage > lobby (PlayMenu module next to this script)
+waitingFor = "the PlayMenu module"
 local playMenu = require(script.Parent:WaitForChild("PlayMenu")).init({
 	Config = Config, Remote = Remote, player = player, popupGui = popupGui,
 	make = make, label = label, pixelButton = pixelButton, pixelPanel = pixelPanel,
@@ -1921,6 +1923,8 @@ local playMenu = require(script.Parent:WaitForChild("PlayMenu")).init({
 		GREEN_BTN = GREEN_BTN, GREEN_EDGE = GREEN_EDGE, RED_BTN = RED_BTN, RED_EDGE = RED_EDGE, rgb = rgb,
 	},
 })
+
+waitingFor = "loading the UI"
 
 -- saved data from the server
 local function applyProfile(p)
@@ -2128,3 +2132,6 @@ task.spawn(function()
 end)
 
 refreshState()
+-- fully loaded: no "didn't finish loading" message
+waitingFor = nil
+if startupGui then startupGui:Destroy() end
