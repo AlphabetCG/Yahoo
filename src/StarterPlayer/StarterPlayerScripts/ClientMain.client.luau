@@ -686,10 +686,11 @@ local upName = label(upPanel, {
 local abilityLabel = label(upPanel, {
 	Position = UDim2.fromOffset(14, 172),
 	Size = UDim2.new(1, -28, 0, 20),
-	TextSize = 15,
+	TextScaled = true,
 	TextXAlignment = Enum.TextXAlignment.Left,
 	Text = "",
 })
+make("UITextSizeConstraint", { MaxTextSize = 15 }, abilityLabel)
 local upButton = pixelButton(upPanel, "UPGRADE", UDim2.new(1, -104, 0, 54), UDim2.new(0, 112, 0, 226), 20, GREEN_BTN, GREEN_EDGE, WHITE)
 local upMaxButton = pixelButton(upPanel, "MAX", UDim2.fromOffset(76, 54), UDim2.new(1, -52, 0, 226), 22, GREEN_BTN, GREEN_EDGE, WHITE)
 
@@ -743,16 +744,24 @@ local function refreshUpgradePanel()
 		return txt .. "s"
 	end)
 
-	-- ability: "NEW: ..." when the next refine adds or changes one, otherwise the current one
-	if nxt and nxt.Ability and not sameAbility(cur.Ability, nxt.Ability) then
-		abilityLabel.Text = "NEXT: " .. Config.DescribeAbility(nxt.Ability)
-		abilityLabel.TextColor3 = GREEN
-	elseif cur.Ability then
-		abilityLabel.Text = Config.DescribeAbility(cur.Ability)
-		abilityLabel.TextColor3 = ABILITY_COLORS[cur.Ability.Kind] or WHITE
-	else
-		abilityLabel.Text = ""
+	-- attack shape + ability: "NEXT: ..." when the next upgrade adds or changes one, otherwise the current one
+	local parts, upcoming = {}, false
+	local curAttack = Config.DescribeAttack(Config.AttackOf(unitName, level))
+	local nxtAttack = nxt and Config.DescribeAttack(Config.AttackOf(unitName, level + 1))
+	if nxtAttack and nxtAttack ~= curAttack then
+		table.insert(parts, nxtAttack)
+		upcoming = true
+	elseif curAttack ~= "SINGLE" then
+		table.insert(parts, curAttack)
 	end
+	if nxt and nxt.Ability and not sameAbility(cur.Ability, nxt.Ability) then
+		table.insert(parts, Config.DescribeAbility(nxt.Ability))
+		upcoming = true
+	elseif cur.Ability then
+		table.insert(parts, Config.DescribeAbility(cur.Ability))
+	end
+	abilityLabel.Text = (upcoming and "NEXT: " or "") .. table.concat(parts, "  |  ")
+	abilityLabel.TextColor3 = upcoming and GREEN or (cur.Ability and ABILITY_COLORS[cur.Ability.Kind] or WHITE)
 
 	local mine = selectedTower:GetAttribute("OwnerId") == player.UserId
 

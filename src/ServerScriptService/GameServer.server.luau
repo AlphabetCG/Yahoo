@@ -629,15 +629,89 @@ local function updateTowers()
 				end
 				local targetPos = best.Part.Position
 				faceTarget(t.Model, targetPos)
-				best.Pending += t.Stats.Damage
+				best.Pending += t.Stats.Damage -- only the target counts against overkill
+				local attack = t.Attack
 				table.insert(pendingHits, {
 					Enemy = best, Damage = t.Stats.Damage, Ability = t.Stats.Ability,
 					Owner = t.Owner, Due = now + Config.ShotTravel,
+					Attack = attack, Origin = o2, Aim = Vector2.new(targetPos.X, targetPos.Z), Range = t.Stats.Range,
 				})
-				shotRemote:FireAllClients(t.Model, best.Part, targetPos)
+				-- clients draw the shot; area attacks also get their shape
+				local shape = nil
+				if attack.Kind ~= "Single" then
+					shape = { K = attack.Kind, R = attack.Radius, W = attack.Width, A = attack.Angle, L = t.Stats.Range }
+				end
+				shotRemote:FireAllClients(t.Model, best.Part, targetPos, shape)
 			end
 		end
 	end
+end
+
+local function flatPos(e)
+	local p = e.Part.Position
+	return Vector2.new(p.X, p.Z)
+end
+
+-- Who a landed shot hits: { { Enemy, Mult } }. The target always takes full damage (if still alive);
+-- area attacks add every other enemy inside their shape, the ones closest to the castle first, up to
+-- MaxHits in total. Positions are taken when the shot lands.
+local function victimsOf(h)
+	local attack = h.Attack or { Kind = "Single" }
+	local main = h.Enemy
+	local list = {}
+	if not main.Dead then table.insert(list, { Enemy = main, Mult = 1 }) end
+	if attack.Kind == "Single" then return list end
+
+	local inside -- function(enemy) -> damage multiplier or nil
+	if attack.Kind == "Splash" then
+		local center = main.Dead and h.Aim or flatPos(main)
+		local radius, pct = attack.Radius or 6, attack.SplashPct or 0.5
+		inside = function(e)
+			return (flatPos(e) - center).Magnitude <= radius and pct or nil
+		end
+	elseif attack.Kind == "Line" then
+		local dir = h.Aim - h.Origin
+		if dir.Magnitude < 1e-3 then return list end
+		dir = dir.Unit
+		local halfWidth, length = (attack.Width or 4) / 2, h.Range + 2
+		inside = function(e)
+			local rel = flatPos(e) - h.Origin
+			local along = rel:Dot(dir)
+			return (along >= 0 and along <= length and (rel - dir * along).Magnitude <= halfWidth) and 1 or nil
+		end
+	elseif attack.Kind == "Cone" then
+		local dir = h.Aim - h.Origin
+		if dir.Magnitude < 1e-3 then return list end
+		dir = dir.Unit
+		local cosHalf = math.cos(math.rad((attack.Angle or 60) / 2))
+		inside = function(e)
+			local rel = flatPos(e) - h.Origin
+			local d = rel.Magnitude
+			return (d <= h.Range and (d < 1e-3 or rel.Unit:Dot(dir) >= cosHalf)) and 1 or nil
+		end
+	elseif attack.Kind == "Circle" then
+		local radius = attack.Radius or h.Range
+		inside = function(e)
+			return (flatPos(e) - h.Origin).Magnitude <= radius and 1 or nil
+		end
+	else
+		return list
+	end
+
+	local extra = {}
+	for _, e in ipairs(enemies) do
+		if e ~= main and not e.Dead then
+			local mult = inside(e)
+			if mult then table.insert(extra, { Enemy = e, Mult = mult }) end
+		end
+	end
+	table.sort(extra, function(a, b) return a.Enemy.Dist > b.Enemy.Dist end)
+	local maxHits = attack.MaxHits or math.huge
+	for _, v in ipairs(extra) do
+		if #list >= maxHits then break end
+		table.insert(list, v)
+	end
+	return list
 end
 
 local function updateHits()
@@ -646,11 +720,12 @@ local function updateHits()
 		local h = pendingHits[i]
 		if h.Due <= now then
 			table.remove(pendingHits, i)
-			local e = h.Enemy
-			e.Pending = math.max(0, e.Pending - h.Damage)
-			if not e.Dead then
-				damageEnemy(e, h.Damage, h.Owner)
-				applyAbility(e, h.Ability, h.Owner)
+			h.Enemy.Pending = math.max(0, h.Enemy.Pending - h.Damage)
+			for _, v in ipairs(victimsOf(h)) do
+				if not v.Enemy.Dead then
+					damageEnemy(v.Enemy, h.Damage * v.Mult, h.Owner)
+					applyAbility(v.Enemy, h.Ability, h.Owner)
+				end
 			end
 		end
 	end
@@ -694,6 +769,7 @@ local function createTower(player, unitName, pos, instance)
 		UnitName = unitName,
 		Level = 1,
 		Stats = Config.ScaledStats(unitName, 1, unitLevel),
+		Attack = Config.AttackOf(unitName, 1), -- shape of the attack (Single / Splash / Line / Cone / Circle)
 		UnitLevel = unitLevel,
 		BeamColor = unit.BeamColor,
 		Last = -math.huge,
@@ -765,6 +841,7 @@ upgradeTowerRemote.OnServerInvoke = function(player, model, all)
 		t.Level += 1
 		t.Spent += nextStats.Cost
 		t.Stats = Config.ScaledStats(t.UnitName, t.Level, t.UnitLevel)
+		t.Attack = Config.AttackOf(t.UnitName, t.Level)
 		bought += 1
 		if all ~= true then break end
 	end

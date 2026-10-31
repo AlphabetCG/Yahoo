@@ -225,6 +225,73 @@ local function spawnShot(x0, z0, x1, z1, color, target, life)
 	addEffect({ kind = "shot", frame = f, x0 = x0 / PXS, z0 = z0 / PXS, x1 = x1 / PXS, z1 = z1 / PXS, target = target, life = life or 0.11 })
 end
 
+-- A fading effect frame (art pixels). grow = { From = Vector2, To = Vector2 } changes its size;
+-- delay = seconds before it appears (e.g. when the shot lands).
+local function addFx(frame, life, grow, delay)
+	frame.ZIndex = 3900
+	frame.Visible = not delay
+	frame.Parent = entityScaler
+	addEffect({ kind = "fx", frame = frame, life = life + (delay or 0), delay = delay or 0, grow = grow,
+		base = frame.BackgroundTransparency, stroke = frame:FindFirstChildOfClass("UIStroke") })
+end
+
+-- a ring (circle outline) centred on (x, z) world studs, growing to `radius` studs
+local function ringFx(x, z, radius, color, life, delay)
+	local f = Instance.new("Frame")
+	f.AnchorPoint = Vector2.new(0.5, 0.5)
+	f.Position = UDim2.fromOffset(x / PXS, z / PXS)
+	f.BackgroundColor3 = color
+	f.BackgroundTransparency = 0.8
+	f.BorderSizePixel = 0
+	local corner = Instance.new("UICorner")
+	corner.CornerRadius = UDim.new(0.5, 0)
+	corner.Parent = f
+	local stroke = Instance.new("UIStroke")
+	stroke.Color = color
+	stroke.Thickness = 1.5
+	stroke.Parent = f
+	local d = radius * 2 / PXS
+	addFx(f, life, { From = Vector2.new(d * 0.2, d * 0.2), To = Vector2.new(d, d) }, delay)
+end
+
+-- a straight beam from (x0, z0) to (x1, z1) world studs, `width` studs wide
+local function beamFx(x0, z0, x1, z1, width, color, life)
+	local dx, dz = (x1 - x0) / PXS, (z1 - z0) / PXS
+	local f = Instance.new("Frame")
+	f.AnchorPoint = Vector2.new(0.5, 0.5)
+	f.Position = UDim2.fromOffset((x0 + x1) / 2 / PXS, (z0 + z1) / 2 / PXS)
+	f.Size = UDim2.fromOffset(math.sqrt(dx * dx + dz * dz), math.max(1, width / PXS))
+	f.Rotation = math.deg(math.atan2(dz, dx))
+	f.BackgroundColor3 = color
+	f.BackgroundTransparency = 0.15
+	f.BorderSizePixel = 0
+	addFx(f, life)
+end
+
+-- what an area attack looks like (shape = { K, R, W, A, L } from the server)
+local function attackFx(fromX, fromZ, toX, toZ, shape, color)
+	if shape.K == "Splash" then
+		ringFx(toX, toZ, shape.R or 6, color, 0.3, Config.ShotTravel)
+	elseif shape.K == "Line" then
+		local dx, dz = toX - fromX, toZ - fromZ
+		local len = math.sqrt(dx * dx + dz * dz)
+		if len < 0.01 then return end
+		local reach = (shape.L or len) + 2
+		beamFx(fromX, fromZ, fromX + dx / len * reach, fromZ + dz / len * reach, (shape.W or 4) * 0.6, color, 0.22)
+		beamFx(fromX, fromZ, fromX + dx / len * reach, fromZ + dz / len * reach, 0.5, WHITE, 0.12)
+	elseif shape.K == "Cone" then
+		local base = math.atan2(toZ - fromZ, toX - fromX)
+		local half = math.rad((shape.A or 60) / 2)
+		local reach = shape.L or 20
+		for i = 0, 4 do
+			local ang = base - half + (2 * half) * i / 4
+			beamFx(fromX, fromZ, fromX + math.cos(ang) * reach, fromZ + math.sin(ang) * reach, 0.6, color, 0.2)
+		end
+	elseif shape.K == "Circle" then
+		ringFx(fromX, fromZ, shape.R or shape.L or 20, color, 0.35)
+	end
+end
+
 -- ===================== ENEMIES =====================
 local function tierColor(tier)
 	return Config.Tiers[math.clamp(tier, 1, Config.MaxTier)].Color
@@ -731,6 +798,18 @@ function WorldView.update(dt)
 		if age >= e.life then
 			e.frame:Destroy()
 			table.remove(effects, i)
+		elseif e.kind == "fx" then
+			local a = age - e.delay
+			if a >= 0 then
+				local t = a / (e.life - e.delay)
+				e.frame.Visible = true
+				e.frame.BackgroundTransparency = e.base + (1 - e.base) * t
+				if e.stroke then e.stroke.Transparency = t end
+				if e.grow then
+					local size = e.grow.From:Lerp(e.grow.To, math.min(1, t * 1.6))
+					e.frame.Size = UDim2.fromOffset(size.X, size.Y)
+				end
+			end
 		elseif e.kind == "part" then
 			e.vz += 60 * dt
 			e.x += e.vx * dt
@@ -787,7 +866,7 @@ function WorldView.start(parent, opts)
 
 		local remotes = ReplicatedStorage:WaitForChild("Remotes")
 		local shot = remotes:WaitForChild("Shot")
-		track(shot.OnClientEvent:Connect(function(model, enemyPart, targetPos)
+		track(shot.OnClientEvent:Connect(function(model, enemyPart, targetPos, shape)
 			local vis = towers[model]
 			if not vis or not vis.root then return end
 			vis.recoilAt = os.clock()
@@ -796,6 +875,11 @@ function WorldView.start(parent, opts)
 			if not target then return end
 			local p = vis.root.Position
 			local color = Config.Units[vis.unit].BeamColor
+			-- area attacks (#40): their shape; Line / Cone / Circle replace the bolt
+			if typeof(shape) == "table" then
+				attackFx(p.X, p.Z, target.x, target.z, shape, color)
+				if shape.K ~= "Splash" then return end
+			end
 			spawnShot(p.X, p.Z - 4.5, target.x, target.z - 2.5, color, target, Config.ShotTravel)
 		end))
 		track(RunService.RenderStepped:Connect(function(dt)
