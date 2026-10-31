@@ -1,5 +1,11 @@
--- PixelArt: all the pixel-art sprites in the game, drawn with plain colored Frames.
--- (No image uploads needed. One "art pixel" = 1 unit; the screen scales it with a UIScale.)
+-- PixelArt: all the sprites in the game. One "art pixel" = 1 unit; the screen scales it with a UIScale.
+-- A sprite is either
+--   * a character grid drawn with plain colored Frames (defs below, no uploads needed), or
+--   * an uploaded image, for units that set Config.Units[name].Image (see Config) - this wins
+--     over the grid, so a unit can switch to its image as soon as the asset id is filled in.
+
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local Config = require(ReplicatedStorage:WaitForChild("Config"))
 
 local PixelArt = {}
 
@@ -19,6 +25,7 @@ function PixelArt.rect(parent, x, y, w, h, color, transparency)
 	return f
 end
 local rect = PixelArt.rect
+local WHITE_PX = Color3.new(1, 1, 1)
 
 -- Turns a character grid into a Frame made of as few rectangles as possible
 local function buildGrid(rows, palette, flip)
@@ -265,17 +272,78 @@ defs.Arrow = {
 }
 
 local templates = {}
+local PLACEHOLDER_W, PLACEHOLDER_H = 14, 18
 
--- Returns a fresh copy of a sprite. opts: flip (mirror left-right), tier + color (Wisp)
+-- The unit's uploaded image settings, or nil when it should use its character grid
+local function imageDef(name)
+	local unit = Config.Units[name]
+	local image = unit and unit.Image
+	if type(image) == "table" and type(image.Id) == "string" and image.Id ~= "" then
+		return image
+	end
+	return nil
+end
+
+-- An ImageLabel showing one frame of an uploaded sprite (sheet). Pixelated, so it stays crisp when zoomed.
+local function buildImage(image, opts)
+	local frames = image.Frames or {}
+	local cell = frames[opts.frame or "Idle"] or frames.Idle or { 0, 0 }
+	local fw, fh = image.FrameSize[1], image.FrameSize[2]
+	local label = Instance.new("ImageLabel")
+	label.BackgroundTransparency = 1
+	label.BorderSizePixel = 0
+	label.Image = image.Id
+	label.ResampleMode = Enum.ResamplerMode.Pixelated
+	label.ScaleType = Enum.ScaleType.Stretch
+	label.Size = UDim2.fromOffset(image.Size[1], image.Size[2])
+	if opts.flip then
+		-- a negative rect width mirrors the image: start at the frame's right edge
+		label.ImageRectOffset = Vector2.new((cell[1] + 1) * fw, cell[2] * fh)
+		label.ImageRectSize = Vector2.new(-fw, fh)
+	else
+		label.ImageRectOffset = Vector2.new(cell[1] * fw, cell[2] * fh)
+		label.ImageRectSize = Vector2.new(fw, fh)
+	end
+	return label
+end
+
+-- Grey "?" box for a unit that has neither an image nor a character grid yet
+local function buildPlaceholder()
+	local root = Instance.new("Frame")
+	root.BackgroundTransparency = 1
+	root.BorderSizePixel = 0
+	root.Size = UDim2.fromOffset(PLACEHOLDER_W, PLACEHOLDER_H)
+	rect(root, 0, 0, PLACEHOLDER_W, PLACEHOLDER_H, rgb(20, 16, 28))
+	rect(root, 1, 1, PLACEHOLDER_W - 2, PLACEHOLDER_H - 2, rgb(120, 124, 140))
+	rect(root, 5, 4, 4, 1, WHITE_PX)
+	rect(root, 8, 5, 1, 3, WHITE_PX)
+	rect(root, 6, 8, 2, 1, WHITE_PX)
+	rect(root, 6, 9, 1, 2, WHITE_PX)
+	rect(root, 6, 12, 1, 1, WHITE_PX)
+	return root
+end
+
+-- Returns a fresh copy of a sprite.
+-- opts: flip (mirror left-right), tier + color (Wisp), frame ("Idle" / "Attack"... for image sprite sheets)
 function PixelArt.sprite(name, opts)
 	opts = opts or {}
+	local image = imageDef(name)
 	local def = defs[name]
-	assert(def, "PixelArt: unknown sprite " .. tostring(name))
-	local key = name .. "|" .. tostring(opts.tier or 0) .. "|" .. (opts.flip and "f" or "n")
+	local key = table.concat({
+		name, tostring(opts.tier or 0), opts.flip and "f" or "n",
+		image and ("img:" .. image.Id .. ":" .. tostring(opts.frame or "Idle")) or "grid",
+	}, "|")
 	local tpl = templates[key]
 	if not tpl then
-		local palette = type(def.palette) == "function" and def.palette(opts) or def.palette
-		tpl = buildGrid(def.rows, palette, opts.flip)
+		if image then
+			tpl = buildImage(image, opts)
+		elseif def then
+			local palette = type(def.palette) == "function" and def.palette(opts) or def.palette
+			tpl = buildGrid(def.rows, palette, opts.flip)
+		else
+			warn("PixelArt: no image or character grid for " .. tostring(name) .. ", showing a placeholder")
+			tpl = buildPlaceholder()
+		end
 		templates[key] = tpl
 	end
 	local copy = tpl:Clone()
@@ -285,8 +353,11 @@ end
 
 -- Width and height of a sprite in art pixels
 function PixelArt.size(name)
+	local image = imageDef(name)
+	if image then return image.Size[1], image.Size[2] end
 	local def = defs[name]
-	return #def.rows[1], #def.rows
+	if def then return #def.rows[1], #def.rows end
+	return PLACEHOLDER_W, PLACEHOLDER_H
 end
 
 -- A pine tree (14 x 24). tone = optional { mid, light, dark, trunk } colors

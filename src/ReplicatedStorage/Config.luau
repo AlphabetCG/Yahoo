@@ -47,6 +47,15 @@ Config.Bounds = { MinX = -78, MaxX = 78, MinZ = -42, MaxZ = 42 }
 --     { Kind = "Burn", Dps = n, Duration = s }  damage over time (money is paid for burn damage too)
 --     { Kind = "Slow", Pct = 0.3, Duration = s } walks Pct slower (the line behind it slows down too)
 -- PlaceLimit = optional: overrides Config.DefaultPlaceLimit for this unit (copies on the map per player).
+-- Image = optional: draw the unit from an uploaded image (sprite sheet) instead of its PixelArt grid.
+--   Image = {
+--     Id = "rbxassetid://123456789",   -- the IMAGE asset id ("" = keep using the PixelArt grid)
+--     Size = { 16, 22 },               -- size on screen in art pixels (Herobrine is 14 x 18; 2 art px = 1 stud)
+--     FrameSize = { 64, 88 },          -- pixels of ONE frame inside the uploaded file
+--     Frames = { Idle = { 0, 0 }, Attack = { 1, 0 } }, -- optional: column / row of each frame in the sheet
+--   },
+--   Draw the character facing RIGHT (it is mirrored when it faces left). Use a transparent PNG and
+--   make FrameSize an exact multiple of Size (e.g. 4x) so the pixels stay sharp.
 Config.UnitOrder = { "Herobrine", "Zaruto", "Fluffy", "Ichitoe", "Voidseer" }
 Config.Units = {
 	Herobrine = {

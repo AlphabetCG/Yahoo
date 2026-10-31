@@ -509,8 +509,12 @@ function WorldView.setGhost(unitName, unitLevel)
 			d.BackgroundTransparency = 0.3
 		end
 	end
+	-- units drawn from an uploaded image: fade / tint the image itself
+	local image = sprite:IsA("ImageLabel") and sprite or nil
+	if image then image.ImageTransparency = 0.3 end
 	ghost = {
 		container = container,
+		image = image,
 		ring = makeRing(Config.ScaledStats(unitName, 1, unitLevel).Range, WHITE),
 		orig = orig,
 		w = w,
@@ -532,6 +536,7 @@ function WorldView.updateGhost(worldPos, valid)
 		for frame, color in pairs(ghost.orig) do
 			frame.BackgroundColor3 = color:Lerp(tint, 0.45)
 		end
+		if ghost.image then ghost.image.ImageColor3 = WHITE:Lerp(tint, 0.45) end
 	end
 end
 
