@@ -262,6 +262,21 @@ defs.ChestBase = {
 	palette = CHEST_PALETTE,
 }
 
+-- Colours for every enemy sprite: built from the tier colour (opts.color)
+local function enemyPalette(opts)
+	local c = opts.color or rgb(70, 190, 70)
+	return {
+		k = c:Lerp(Color3.new(0, 0, 0), 0.68),
+		l = c:Lerp(Color3.new(1, 1, 1), 0.5),
+		m = c,
+		d = c:Lerp(Color3.new(0, 0, 0), 0.3),
+		w = Color3.new(1, 1, 1),
+		e = rgb(30, 30, 50),
+		a = rgb(118, 124, 140), -- armour (Tank)
+		f = rgb(236, 240, 255), -- wings (Flyer)
+	}
+end
+
 -- Wisp: the enemy. Its color comes from the enemy tier (12 x 12)
 defs.Wisp = {
 	rows = {
@@ -278,17 +293,59 @@ defs.Wisp = {
 		"..kddddddk..",
 		"..kk.kk.kk..",
 	},
-	palette = function(opts)
-		local c = opts.color or rgb(70, 190, 70)
-		return {
-			k = c:Lerp(Color3.new(0, 0, 0), 0.68),
-			l = c:Lerp(Color3.new(1, 1, 1), 0.5),
-			m = c,
-			d = c:Lerp(Color3.new(0, 0, 0), 0.3),
-			w = Color3.new(1, 1, 1),
-			e = rgb(30, 30, 50),
-		}
-	end,
+	palette = function(opts) return enemyPalette(opts) end,
+}
+
+-- Enemy types (Config.EnemyTypes): same tier colours as the wisp
+-- Runner: small and quick (10 x 9)
+defs.Runner = {
+	rows = {
+		"....kk....",
+		"...kllk...",
+		"..kllmmk..",
+		".klmmmmmk.",
+		"kmwemwemmk",
+		"kmmmmmmmk.",
+		".kdmmmmdk.",
+		"..kddddk..",
+		"...k.k....",
+	},
+	palette = function(opts) return enemyPalette(opts) end,
+}
+-- Tank: big, with grey armour plates (14 x 12)
+defs.Tank = {
+	rows = {
+		"......kk......",
+		".....kllk.....",
+		"....kllmmk....",
+		"..kkllmmmmkk..",
+		".kaakmmmmkaak.",
+		"kaaamwemwemaak",
+		"kaaammmmmmmaak",
+		"kaaammmmmmmaak",
+		".kaadmmmmmdak.",
+		"..kkddddddkk..",
+		"..kaak..kaak..",
+		"..kkkk..kkkk..",
+	},
+	palette = function(opts) return enemyPalette(opts) end,
+}
+-- Flyer: a wisp with wings (12 x 11); drawn floating above its shadow
+defs.Flyer = {
+	rows = {
+		".....kk.....",
+		"....kllk....",
+		"kk..kllk..kk",
+		"kffkllmmkffk",
+		"kfffkmmmkffk",
+		".kfkmmmmmkfk",
+		"..kmwemwemk.",
+		"..kmmmmmmmk.",
+		"..kdmmmmmdk.",
+		"...kddddk...",
+		"....kkkk....",
+	},
+	palette = function(opts) return enemyPalette(opts) end,
 }
 
 -- Little gold arrow shown above the selected unit (7 x 4)

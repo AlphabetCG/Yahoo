@@ -151,6 +151,7 @@ Config.Bounds = { MinX = -78, MaxX = 78, MinZ = -42, MaxZ = 42 }
 --     { Kind = "Burn", Dps = n, Duration = s }  damage over time (money is paid for burn damage too)
 --     { Kind = "Slow", Pct = 0.3, Duration = s } walks Pct slower (the line behind it slows down too)
 -- PlaceLimit = optional: overrides Config.DefaultPlaceLimit for this unit (copies on the map per player).
+-- CanHitAir = true: the unit can hit Flying enemies (see Config.EnemyTypes).
 -- Attack = optional attack shape, on the unit or on an upgrade level (a level keeps the shape of the
 --   closest level below it that sets one). Without it the unit hits one enemy ("Single").
 --     { Kind = "Splash", Radius = 6, SplashPct = 0.5 }  the target + everyone within Radius studs of it (SplashPct damage)
@@ -172,6 +173,7 @@ Config.Units = {
 	Herobrine = {
 		Rarity = "Rare",
 		Cost = 400,
+		CanHitAir = true, -- can hit Flying enemies
 		BeamColor = Color3.fromRGB(255, 255, 255),
 		Levels = {
 			{ Damage = 2, Range = 30, Cooldown = 0.6 },
@@ -187,6 +189,7 @@ Config.Units = {
 	Zaruto = {
 		Rarity = "Epic",
 		Cost = 600,
+		CanHitAir = true, -- can hit Flying enemies
 		BeamColor = Color3.fromRGB(255, 150, 40),
 		Levels = {
 			{ Damage = 1, Range = 26, Cooldown = 0.2 },
@@ -230,6 +233,7 @@ Config.Units = {
 	Voidseer = {
 		Rarity = "Legendary",
 		Cost = 900,
+		CanHitAir = true, -- can hit Flying enemies
 		BeamColor = Color3.fromRGB(140, 100, 255),
 		Levels = {
 			{ Damage = 4, Range = 38, Cooldown = 0.5 },
@@ -347,6 +351,53 @@ Config.Tiers = {
 	[4] = { Color = Color3.fromRGB(240, 210, 60), Speed = 9, HP = 4 },
 	[5] = { Color = Color3.fromRGB(240, 130, 190), Speed = 11, HP = 5 },
 }
+
+-- ===== Enemy types =====
+-- Every spawned enemy has a tier (colour / base HP / speed, above) AND a type that changes it:
+--   Health / Speed = multipliers, Size = how much room it takes in the single-file line,
+--   Lives = multiplier on the lives it costs when it reaches the castle,
+--   Shield = share of its max HP as a shield that must be broken first (shield damage pays no money),
+--   Flying = only units with CanHitAir can hit it; it flies over the line (doesn't queue, nobody queues
+--   behind it). Overtakes = walks the path but passes other enemies (no queueing, nobody queues behind it).
+--   Sprite = which PixelArt sprite is drawn.
+Config.EnemyTypes = {
+	Wisp = { Name = "Wisp", Sprite = "Wisp", Health = 1, Speed = 1 },
+	Runner = { Name = "Runner", Sprite = "Runner", Health = 0.5, Speed = 1.7, Size = 0.8, Overtakes = true },
+	Tank = { Name = "Tank", Sprite = "Tank", Health = 3, Speed = 0.6, Size = 1.3, Lives = 2 },
+	Shielded = { Name = "Shielded", Sprite = "Wisp", Health = 1, Speed = 0.9, Shield = 0.5 },
+	Flying = { Name = "Flyer", Sprite = "Flyer", Health = 0.8, Speed = 1.2, Flying = true },
+}
+
+-- Which types a wave is made of: the last entry whose FromRound <= the round is used.
+-- Mix = { Type = weight }. Endless stages keep using the last entry.
+Config.WaveMix = {
+	{ FromRound = 1, Mix = { Wisp = 100 } },
+	{ FromRound = 3, Mix = { Wisp = 80, Runner = 20 } },
+	{ FromRound = 5, Mix = { Wisp = 60, Runner = 20, Tank = 20 } },
+	{ FromRound = 7, Mix = { Wisp = 45, Runner = 20, Tank = 15, Shielded = 20 } },
+	{ FromRound = 9, Mix = { Wisp = 35, Runner = 20, Tank = 15, Shielded = 15, Flying = 15 } },
+}
+
+-- A random enemy type for round r (weighted by Config.WaveMix)
+function Config.EnemyTypeFor(r, rng)
+	local mix = Config.WaveMix[1].Mix
+	for _, entry in ipairs(Config.WaveMix) do
+		if r >= entry.FromRound then mix = entry.Mix end
+	end
+	local total = 0
+	for _, weight in pairs(mix) do total += weight end
+	local roll = (rng and rng:NextNumber() or math.random()) * total
+	local last = "Wisp"
+	for _, name in ipairs({ "Wisp", "Runner", "Tank", "Shielded", "Flying" }) do
+		local weight = mix[name]
+		if weight then
+			last = name
+			roll -= weight
+			if roll <= 0 then return name end
+		end
+	end
+	return last
+end
 
 -- ===== Boss =====
 -- One boss walks the path when round Boss.Round starts. If it reaches the castle it costs

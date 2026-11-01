@@ -316,13 +316,14 @@ local function buildEnemySprite(vis)
 		sprite.Parent = holder
 		vis.sprite = holder
 	else
-		vis.sprite = PixelArt.sprite("Wisp", { tier = vis.tier, color = tierColor(vis.tier) })
+		vis.sprite = PixelArt.sprite(vis.spriteName, { tier = vis.tier, color = tierColor(vis.tier) })
 	end
 	vis.sprite.Parent = vis.container
 end
 
 -- Health bar: the enemy's name on top, then a red bar with "current/max" written inside it
 local BAR_FILL, BAR_BACK = rgb(214, 38, 38), rgb(84, 12, 16)
+local SHIELD_COLOR = rgb(110, 200, 255)
 
 local function shortNumber(n)
 	n = math.floor(n + 0.5)
@@ -360,14 +361,18 @@ local function buildBar(vis, container)
 	root.Name = "HealthBar"
 	root.BackgroundTransparency = 1
 	root.BorderSizePixel = 0
-	root.Position = UDim2.fromOffset(6 - bw / 2, top)
+	root.Position = UDim2.fromOffset((boss and 6 or vis.w / 2) - bw / 2, top)
 	root.Size = UDim2.fromOffset(bw, nameH + bh)
 	root.Visible = false
 	root.Parent = container
-	barText(root, 0, 0, bw, nameH, boss and Config.Boss.Name or "Wisp", textSize)
+	barText(root, 0, 0, bw, nameH, boss and Config.Boss.Name or vis.typeName, textSize)
 	rect(root, 0, nameH, bw, bh, BLACK)
 	rect(root, 1, nameH + 1, bw - 2, bh - 2, BAR_BACK)
 	vis.barFill = rect(root, 1, nameH + 1, bw - 2, bh - 2, BAR_FILL)
+	if vis.maxShield then
+		-- Shielded: a blue strip over the bar while the shield holds
+		vis.shieldFill = rect(root, 1, nameH + 1, bw - 2, 2, SHIELD_COLOR)
+	end
 	vis.hpLabel = barText(root, 0, nameH, bw, bh, "", textSize)
 	vis.barMax = bw - 2
 	vis.barH = bh - 2
@@ -381,6 +386,11 @@ local function updateBar(vis)
 	vis.barFill.Size = UDim2.fromOffset(math.max(hp > 0 and 1 or 0, math.floor(vis.barMax * hp / maxHp + 0.5)), vis.barH)
 	-- health can be fractional (it scales with the round): show it rounded up, so 0.4 HP reads "1"
 	vis.hpLabel.Text = shortNumber(math.ceil(hp - 1e-6)) .. "/" .. shortNumber(math.ceil(maxHp - 1e-6))
+	if vis.shieldFill then
+		local shield = math.max(0, vis.part:GetAttribute("Shield") or 0)
+		vis.shieldFill.Size = UDim2.fromOffset(math.floor(vis.barMax * shield / vis.maxShield + 0.5), 2)
+		vis.shieldFill.Visible = shield > 0
+	end
 end
 
 local function removeEnemy(part)
@@ -407,21 +417,63 @@ end
 local function addEnemy(part)
 	if enemies[part] or not part:IsA("BasePart") or not part:IsDescendantOf(workspace) then return end
 	local vis = { part = part, phase = math.random() * 6.28, conns = {}, tier = part:GetAttribute("Tier") or 1, boss = part:GetAttribute("Boss") == true }
+	-- enemy type (Config.EnemyTypes): sprite, name, flying, shield
+	local typeName = part:GetAttribute("Type") or "Wisp"
+	local def = Config.EnemyTypes[typeName] or Config.EnemyTypes.Wisp
+	vis.typeName = def.Name or typeName
+	vis.spriteName = vis.boss and "Wisp" or (def.Sprite or "Wisp")
+	vis.w, vis.h = PixelArt.size(vis.spriteName)
+	if vis.boss then vis.w, vis.h = 12, 12 end
+	vis.lift = part:GetAttribute("Flying") and 6 or 0 -- flyers float above their shadow
+	vis.maxShield = part:GetAttribute("MaxShield")
+	vis.ox, vis.oy = vis.w // 2, vis.h - 1 + vis.lift -- container offset from the feet point
 	local container = Instance.new("Frame")
 	container.Name = "Enemy"
 	container.BackgroundTransparency = 1
 	container.BorderSizePixel = 0
-	container.Size = UDim2.fromOffset(12, 12)
+	container.Size = UDim2.fromOffset(vis.w, vis.h + vis.lift)
 	local p = part.Position
 	local startX, startZ = math.floor(p.X / PXS + 0.5), math.floor(p.Z / PXS + 0.5)
-	container.Position = UDim2.fromOffset(startX - 6, startZ - 11)
+	container.Position = UDim2.fromOffset(startX - vis.ox, startZ - vis.oy)
 	container.ZIndex = 2000 + startZ
 	container.Parent = entityScaler
 	if not vis.boss then
-		rect(container, 1, 10, 10, 2, BLACK, 0.6) -- shadow
+		-- shadow on the ground (smaller under a flyer)
+		local inset = vis.lift > 0 and 3 or 1
+		rect(container, inset, vis.h - 2 + vis.lift, vis.w - 2 * inset, 2, BLACK, vis.lift > 0 and 0.75 or 0.6)
 	end
 	vis.container = container
 	buildEnemySprite(vis)
+	if vis.maxShield then
+		-- Shielded: a bubble around it until the shield breaks
+		local bubble = Instance.new("Frame")
+		bubble.AnchorPoint = Vector2.new(0.5, 0.5)
+		bubble.Position = UDim2.fromOffset(vis.w / 2, vis.h / 2)
+		local d = math.max(vis.w, vis.h) + 4
+		bubble.Size = UDim2.fromOffset(d, d)
+		bubble.BackgroundColor3 = SHIELD_COLOR
+		bubble.BackgroundTransparency = 0.82
+		bubble.BorderSizePixel = 0
+		bubble.ZIndex = 3
+		local corner = Instance.new("UICorner")
+		corner.CornerRadius = UDim.new(0.5, 0)
+		corner.Parent = bubble
+		local stroke = Instance.new("UIStroke")
+		stroke.Color = SHIELD_COLOR
+		stroke.Thickness = 1
+		stroke.Transparency = 0.25
+		stroke.Parent = bubble
+		bubble.Parent = container
+		vis.bubble = bubble
+		table.insert(vis.conns, part:GetAttributeChangedSignal("Shield"):Connect(function()
+			updateBar(vis)
+			if (part:GetAttribute("Shield") or 0) <= 0 and vis.bubble then
+				vis.bubble:Destroy()
+				vis.bubble = nil
+				burst(vis.x, vis.z - 4, SHIELD_COLOR, 8) -- the shield breaks
+			end
+		end))
+	end
 	-- health bar above the enemy; only shown while hovered (or always, if the setting is on)
 	buildBar(vis, container)
 	vis.barShown = false
@@ -856,7 +908,7 @@ function WorldView.update(dt)
 		local px = math.floor(vis.x / PXS + 0.5)
 		local pz = math.floor(vis.z / PXS + 0.5)
 		local bob = -math.floor(math.abs(math.sin(now * 7 + vis.phase)) * 2.2)
-		vis.container.Position = UDim2.fromOffset(px - 6, pz - 11 + bob)
+		vis.container.Position = UDim2.fromOffset(px - vis.ox, pz - vis.oy + bob)
 		vis.container.ZIndex = 2000 + pz
 
 		-- Refine abilities: burning enemies give off orange sparks, slowed ones blue sparks
