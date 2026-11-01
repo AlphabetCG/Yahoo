@@ -687,7 +687,10 @@ function PlayerData.SellUnits(player, uids)
 	local gold, sold = 0, 0
 	for _, uid in ipairs(uids) do
 		local unit = typeof(uid) == "string" and profile.Units[uid]
-		if unit and not unit.Locked and not loadoutSlotOf(profile, uid) and owned - sold > 1 then
+		-- Unobtainable units (developer only, given again on every join) are never sold for Gold
+		local def = unit and Config.Units[unit.Name]
+		if unit and not unit.Locked and not loadoutSlotOf(profile, uid) and owned - sold > 1
+			and not (def and def.Unobtainable) then
 			profile.Units[uid] = nil
 			gold += Config.RarityOf(unit.Name).SellGold
 			sold += 1

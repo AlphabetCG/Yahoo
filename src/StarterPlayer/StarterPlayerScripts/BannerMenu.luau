@@ -115,7 +115,7 @@ function BannerMenu.init(ui)
 			line(("%s   %s"):format(string.upper(row.Rarity), percent(row.Chance)), Config.Rarities[row.Rarity].Color, 18)
 			for _, u in ipairs(row.Units) do
 				local featured = banner.Featured and banner.Featured[row.Rarity] == u.Name
-				line(("    %s%s   %s"):format(string.upper(u.Name), featured and " (RATE UP)" or "", percent(u.Chance)), C.WHITE, 14)
+				line(("    %s%s   %s"):format(Config.DisplayName(u.Name), featured and " (RATE UP)" or "", percent(u.Chance)), C.WHITE, 14)
 			end
 		end
 		for rarity, limit in pairs(banner.Pity or {}) do
@@ -154,7 +154,7 @@ function BannerMenu.init(ui)
 		local banner = Config.Banners[bannerId]
 		local color = banner.Color or C.GOLD
 
-		local art = make("Frame", { Size = UDim2.new(1, 0, 0, 230), BackgroundColor3 = color:Lerp(C.BLACK, 0.55), BorderSizePixel = 0 }, body)
+		local art = make("Frame", { Size = UDim2.new(1, 0, 0, 230), BackgroundColor3 = color:Lerp(C.BLACK, 0.55), BorderSizePixel = 0, ClipsDescendants = true }, body)
 		make("UIStroke", { Color = color, Thickness = 3, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, art)
 		label(art, { Position = UDim2.fromOffset(16, 10), Size = UDim2.new(1, -32, 0, 34), Text = string.upper(banner.Name), TextSize = 28, TextColor3 = C.WHITE, TextXAlignment = Enum.TextXAlignment.Left })
 		label(art, { Position = UDim2.fromOffset(16, 44), Size = UDim2.new(1, -32, 0, 22), Text = timeLeft(banner), TextSize = 16, TextColor3 = C.GOLD, TextXAlignment = Enum.TextXAlignment.Left })
@@ -173,7 +173,7 @@ function BannerMenu.init(ui)
 				TextColor3 = C.GOLD, TextXAlignment = Enum.TextXAlignment.Left,
 			})
 			label(art, {
-				Position = UDim2.fromOffset(230, 124), Size = UDim2.fromOffset(290, 36), Text = string.upper(featuredName), TextSize = 30,
+				Position = UDim2.fromOffset(230, 124), Size = UDim2.fromOffset(290, 36), Text = Config.DisplayName(featuredName), TextSize = 30,
 				TextColor3 = Config.Rarities[featuredRarity].Color, TextXAlignment = Enum.TextXAlignment.Left,
 			})
 			label(art, {
@@ -182,12 +182,16 @@ function BannerMenu.init(ui)
 				TextColor3 = C.TEXT_DIM, TextXAlignment = Enum.TextXAlignment.Left,
 			})
 		else
-			local x = 0
-			for _, row in ipairs(Config.BannerRates(bannerId)) do
+			-- the PREVIEW_COUNT rarest units that can drop, spread across the box (RATES lists them all)
+			local PREVIEW_COUNT = 4
+			local shown = {}
+			for _, row in ipairs(Config.BannerRates(bannerId)) do -- rarest first
 				for _, u in ipairs(row.Units) do
-					sprite(art, u.Name, 3, UDim2.new(0, 60 + x * 96, 0, 150))
-					x += 1
+					if #shown < PREVIEW_COUNT then table.insert(shown, u.Name) end
 				end
+			end
+			for i, name in ipairs(shown) do
+				sprite(art, name, 3, UDim2.new((i - 0.5) / #shown, 0, 0, 150))
 			end
 		end
 

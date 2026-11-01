@@ -803,13 +803,37 @@ local function refreshUpgradePanel()
 	local nxt = Config.ScaledStats(unitName, level + 1, unitLevel)
 
 	upPanel.Visible = true
-	upTitle.Text = ("%s  LV%d  UP%d"):format(string.upper(unitName), unitLevel, level)
-	rowDamage.Text = statText("DAMAGE", cur.Damage, nxt and nxt.Damage, fmtNum)
-	rowRange.Text = statText("RANGE ", cur.Range, nxt and nxt.Range, fmtNum)
-	rowSpeed.Text = statText("SPA   ", cur.Cooldown, nxt and nxt.Cooldown, function(v)
+	upTitle.Text = ("%s  LV%d  UP%d"):format(Config.DisplayName(unitName), unitLevel, level)
+	local function seconds(v)
 		local txt = ("%.2f"):format(v):gsub("0+$", ""):gsub("%.$", "")
 		return txt .. "s"
-	end)
+	end
+	-- the three stat rows depend on what the unit does (Config.UnitTypes)
+	local kind = Config.UnitType(unitName)
+	if kind == "Farm" then
+		rowDamage.Text = statText("INCOME", cur.Income, nxt and nxt.Income, function(v) return "$" .. fmt(v) end)
+		rowRange.Text = "PAID WHEN EACH WAVE ENDS"
+		rowSpeed.Text = ""
+	elseif kind == "Buffer" then
+		local pct = function(v) return ("+%d%%"):format(math.floor(v * 100 + 0.5)) end
+		rowDamage.Text = statText("BUFF  ", cur.Buff, nxt and nxt.Buff, pct)
+		rowRange.Text = statText("RANGE ", cur.Range, nxt and nxt.Range, fmtNum)
+		rowSpeed.Text = "DAMAGE OF UNITS IN RANGE"
+	elseif kind == "Summoner" then
+		rowDamage.Text = statText("PUPPET", cur.Damage, nxt and nxt.Damage, function(v) return fmtNum(v) .. " HP" end)
+		rowRange.Text = statText("EVERY ", cur.Cooldown, nxt and nxt.Cooldown, seconds)
+		rowSpeed.Text = "HITS GROUND AND AIR"
+	elseif kind == "Wipe" then
+		rowDamage.Text = "KILLS EVERY ENEMY"
+		rowRange.Text = "RANGE  WHOLE MAP"
+		rowSpeed.Text = statText("EVERY ", cur.Cooldown, nxt and nxt.Cooldown, seconds)
+	else
+		local buff = selectedTower:GetAttribute("Buff") or 0
+		local buffText = buff > 0 and ("  <font color='#FF96C8'>+%d%%</font>"):format(math.floor(buff * 100 + 0.5)) or ""
+		rowDamage.Text = statText("DAMAGE", cur.Damage, nxt and nxt.Damage, fmtNum) .. buffText
+		rowRange.Text = statText("RANGE ", cur.Range, nxt and nxt.Range, fmtNum)
+		rowSpeed.Text = statText("SPA   ", cur.Cooldown, nxt and nxt.Cooldown, seconds)
+	end
 
 	-- ability: "NEXT: ..." when the next upgrade adds or changes one, otherwise the current one
 	-- (the attack shape isn't written here: the area indicator on the map shows it)
@@ -869,7 +893,7 @@ local function selectTower(model)
 	deselectTower()
 	selectedTower = model
 	WorldView.setSelected(model)
-	for _, attr in ipairs({ "Level", "Targeting", "Spent" }) do
+	for _, attr in ipairs({ "Level", "Targeting", "Spent", "Buff" }) do
 		table.insert(towerConns, model:GetAttributeChangedSignal(attr):Connect(refreshUpgradePanel))
 	end
 	table.insert(towerConns, model.AncestryChanged:Connect(function(_, parent)
@@ -1086,14 +1110,14 @@ local function rebuildShop()
 			label(card, {
 				Position = UDim2.fromOffset(0, 94),
 				Size = UDim2.new(1, 0, 0, 26),
-				Text = string.upper(name),
+				Text = Config.DisplayName(name),
 				TextSize = 22,
 				TextColor3 = Config.RarityOf(name).Color,
 			})
 			label(card, {
 				Position = UDim2.fromOffset(0, 120),
 				Size = UDim2.new(1, 0, 0, 20),
-				Text = ("LV%d  DMG %s  RNG %s"):format(u.Level, fmtNum(stats.Damage), fmtNum(stats.Range)),
+				Text = ("LV%d  %s"):format(u.Level, Config.UnitSummary(name, stats)),
 				TextSize = 14,
 				TextColor3 = TEXT_DIM,
 			})
@@ -1219,7 +1243,7 @@ local function rewardsText(r)
 	if r.LevelUps and #r.LevelUps > 0 then
 		local ups = {}
 		for _, up in ipairs(r.LevelUps) do
-			table.insert(ups, ("%s LV%d"):format(string.upper(up.Name), up.Level))
+			table.insert(ups, ("%s LV%d"):format(Config.DisplayName(up.Name), up.Level))
 		end
 		text ..= "\nLEVEL UP: " .. table.concat(ups, ", ")
 	end
@@ -1741,7 +1765,7 @@ local function buildInventory()
 			ApplyStrokeMode = Enum.ApplyStrokeMode.Border,
 		}, card)
 		makePortrait(card, name)
-		label(card, { Position = UDim2.fromOffset(0, 92), Size = UDim2.new(1, 0, 0, 22), Text = string.upper(name), TextSize = 18, TextColor3 = rarity.Color })
+		label(card, { Position = UDim2.fromOffset(0, 92), Size = UDim2.new(1, 0, 0, 22), Text = Config.DisplayName(name), TextSize = 18, TextColor3 = rarity.Color })
 		if instance then
 			label(card, {
 				Position = UDim2.fromOffset(0, 114), Size = UDim2.new(1, 0, 0, 20),
@@ -1749,7 +1773,7 @@ local function buildInventory()
 				TextSize = 16, TextColor3 = GOLD,
 			})
 			local stats = Config.ScaledStats(name, 1, instance.Level)
-			label(card, { Position = UDim2.fromOffset(0, 136), Size = UDim2.new(1, 0, 0, 18), Text = ("DMG %s  RNG %s"):format(fmtNum(stats.Damage), fmtNum(stats.Range)), TextSize = 13, TextColor3 = TEXT_DIM })
+			label(card, { Position = UDim2.fromOffset(0, 136), Size = UDim2.new(1, 0, 0, 18), Text = Config.UnitSummary(name, stats), TextSize = 13, TextColor3 = TEXT_DIM })
 			local slot = loadoutSlotOf(instance.Id)
 			if slot then
 				label(card, { Position = UDim2.fromOffset(8, 8), Size = UDim2.fromOffset(30, 16), Text = "E" .. slot, TextSize = 14, TextColor3 = GREEN, ZIndex = 3 })
@@ -1804,7 +1828,7 @@ local function buildInventory()
 
 		detailPortrait:ClearAllChildren()
 		makePortrait(detailPortrait, name)
-		dName.Text = string.upper(name)
+		dName.Text = Config.DisplayName(name)
 		dName.TextColor3 = rarity.Color
 		dSub.Text = ("%s   LV %d/%d"):format(string.upper(Config.Units[name].Rarity or ""), u.Level, maxLevel)
 
@@ -1819,9 +1843,16 @@ local function buildInventory()
 
 		local stats = Config.ScaledStats(name, 1, u.Level)
 		local nextStats = u.Level < maxLevel and Config.ScaledStats(name, 1, u.Level + 1)
-		dDamage.Text = "DAMAGE  " .. fmtNum(stats.Damage) .. (nextStats and ("  (next " .. fmtNum(nextStats.Damage) .. ")") or "")
-		dRange.Text = "RANGE   " .. fmtNum(stats.Range)
-		dSpeed.Text = "SPA     " .. spaText(stats.Cooldown)
+		if Config.UnitType(name) then
+			-- farms, buffers, summoners...: their own main stat instead of damage / range / speed
+			dDamage.Text = Config.UnitSummary(name, stats)
+			dRange.Text = ""
+			dSpeed.Text = ""
+		else
+			dDamage.Text = "DAMAGE  " .. fmtNum(stats.Damage) .. (nextStats and ("  (next " .. fmtNum(nextStats.Damage) .. ")") or "")
+			dRange.Text = "RANGE   " .. fmtNum(stats.Range)
+			dSpeed.Text = "SPA     " .. spaText(stats.Cooldown)
+		end
 		local abilityLevel, ability = firstAbility(name)
 		dAbility.Text = ability and ("UP%d: %s"):format(abilityLevel, Config.DescribeAbility(ability)) or ""
 
@@ -1834,7 +1865,7 @@ local function buildInventory()
 			dState.Text = "EQUIPPED IN SLOT " .. slot
 			dState.TextColor3 = GREEN
 		elseif sameType then
-			dState.Text = ("ANOTHER %s IS IN SLOT %d"):format(string.upper(name), sameType)
+			dState.Text = ("ANOTHER %s IS IN SLOT %d"):format(Config.DisplayName(name), sameType)
 			dState.TextColor3 = GOLD
 		else
 			dState.Text = "NOT EQUIPPED"
@@ -1851,7 +1882,7 @@ local function buildInventory()
 		dEssence.Text = ("WISP ESSENCE x%s  (+%d XP EACH)"):format(fmt(essence), Config.Leveling.XpPerEssence)
 
 		lockButton.Text = u.Locked and "UNLOCK" or "LOCK"
-		local sellable = not u.Locked and not slot
+		local sellable = not u.Locked and not slot and not Config.Units[name].Unobtainable
 		if os.clock() < sellConfirmUntil and sellable then
 			sellButtonInv.Text = "CONFIRM?"
 		else
@@ -1924,7 +1955,7 @@ local function buildInventory()
 			pickingSlotFor = nil
 			invNotify("")
 		elseif table.find(profile.Loadout, "") then
-			if invCall(Remote.EquipUnit, u.Id, nil) then invNotify(string.upper(u.Name) .. " equipped", GREEN) end
+			if invCall(Remote.EquipUnit, u.Id, nil) then invNotify(Config.DisplayName(u.Name) .. " equipped", GREEN) end
 		else
 			pickingSlotFor = u.Id
 			invNotify("Loadout full: click the slot to replace", GOLD)
@@ -1959,7 +1990,7 @@ local function buildInventory()
 		if os.clock() < sellConfirmUntil then
 			sellConfirmUntil = 0
 			local ok, gold = invCall(Remote.SellUnits, { u.Id })
-			if ok then invNotify(("Sold %s for %d Gold"):format(string.upper(u.Name), gold), Config.GoldColor) end
+			if ok then invNotify(("Sold %s for %d Gold"):format(Config.DisplayName(u.Name), gold), Config.GoldColor) end
 		else
 			sellConfirmUntil = os.clock() + 3
 			refreshDetail()

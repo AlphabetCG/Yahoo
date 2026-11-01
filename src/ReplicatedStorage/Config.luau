@@ -168,7 +168,47 @@ Config.Bounds = { MinX = -78, MaxX = 78, MinZ = -42, MaxZ = 42 }
 --   },
 --   Draw the character facing RIGHT (it is mirrored when it faces left). Use a transparent PNG and
 --   make FrameSize an exact multiple of Size (e.g. 4x) so the pixels stay sharp.
-Config.UnitOrder = { "Herobrine", "Zaruto", "Fluffy", "Ichitoe", "Voidseer" }
+--   The units below use unitImage: their PNGs are in assets/units/, the ids in Config.UnitImages.
+-- Type = optional, what the unit does instead of shooting (see Config.UnitTypes): "Farm", "Buffer",
+--   "Summoner" or "Wipe". Without it the unit attacks normally.
+-- Unobtainable = true: never drops from a banner (Lord Moon: given to developers only).
+Config.UnitOrder = { "Herobrine", "Roy", "Zaruto", "Fluffy", "Ichitoe", "FlowerMage", "Voidseer", "PuppetNinja", "LordMoon" }
+
+-- Uploaded image ids ("rbxassetid://...") of the PNGs in assets/units/ (<Name>_4x.png: the character
+-- cropped from artifacts/, 4 image pixels per art pixel). "" = not uploaded yet: the grid is drawn.
+Config.UnitImages = {
+	Voidseer = "rbxassetid://76702300407156",
+	Zaruto = "rbxassetid://123140835797676",
+	Fluffy = "rbxassetid://116018563884691",
+	Ichitoe = "rbxassetid://99880058622124",
+	Roy = "rbxassetid://109673376495230",
+	FlowerMage = "rbxassetid://114595170403535",
+	PuppetNinja = "rbxassetid://113572590772166",
+	PuppetNinjaPuppet = "rbxassetid://136682912365586",
+	LordMoon = "rbxassetid://107445243878977",
+}
+-- An Image table for assets/units/<file>_4x.png, drawn `w` x `h` art pixels (the file is 4x that)
+local function unitImage(file, w, h)
+	return { Id = Config.UnitImages[file] or "", Size = { w, h }, FrameSize = { w * 4, h * 4 } }
+end
+
+-- What the non-attacking unit types do (stats per level are in their Levels):
+--   Farm      Income = money paid to the owner when each wave ends (when the next round starts)
+--   Buffer    Buff = extra damage (0.2 = +20%) for every unit within its Range (strongest buff counts, no stacking)
+--   Summoner  every Cooldown seconds sends a summon (Config.Summons[unit.Summon]) from the castle back
+--             along the path. Damage = the summon's max HP: an enemy it touches takes damage up to the
+--             summon's remaining HP, and the summon loses that much. It hits Flying enemies too; no cap.
+--   Wipe      every Cooldown seconds, every enemy on the map (Flying and the boss too) is killed
+Config.UnitTypes = { Farm = true, Buffer = true, Summoner = true, Wipe = true }
+
+-- Summons walking the path (drawn by the client from workspace.Summons)
+Config.Summons = {
+	Puppet = { Name = "Puppet", Sprite = "PuppetNinjaPuppet", Speed = 7, Radius = 2 },
+}
+-- Sprites that are not units but are drawn from an uploaded image (PixelArt looks here too)
+Config.Sprites = {
+	PuppetNinjaPuppet = { Image = unitImage("PuppetNinjaPuppet", 10, 20) },
+}
 Config.Units = {
 	Herobrine = {
 		Rarity = "Rare",
@@ -187,6 +227,7 @@ Config.Units = {
 	},
 	-- Epic, rapid-fire: tiny hits very fast, short range; final refine sets enemies on fire
 	Zaruto = {
+		Image = unitImage("Zaruto", 10, 26),
 		Rarity = "Epic",
 		Cost = 600,
 		CanHitAir = true, -- can hit Flying enemies
@@ -202,6 +243,7 @@ Config.Units = {
 	},
 	-- Epic, long reach: stretchy punches from far away; last refines briefly slow enemies
 	Fluffy = {
+		Image = unitImage("Fluffy", 12, 26),
 		Rarity = "Epic",
 		Cost = 600,
 		BeamColor = Color3.fromRGB(240, 70, 60),
@@ -217,6 +259,7 @@ Config.Units = {
 	},
 	-- Epic, heavy hitter: big slow sword swings at short range; great against tough enemies and the boss
 	Ichitoe = {
+		Image = unitImage("Ichitoe", 19, 26),
 		Rarity = "Epic",
 		Cost = 600,
 		BeamColor = Color3.fromRGB(220, 60, 60),
@@ -231,6 +274,7 @@ Config.Units = {
 	},
 	-- Legendary test unit: strong from the start, about 2.5x Herobrine's damage per second at every level
 	Voidseer = {
+		Image = unitImage("Voidseer", 12, 26),
 		Rarity = "Legendary",
 		Cost = 900,
 		CanHitAir = true, -- can hit Flying enemies
@@ -245,7 +289,101 @@ Config.Units = {
 				Ability = { Kind = "Slow", Pct = 0.35, Duration = 1.5 }, Attack = { Kind = "Line", Width = 5, MaxHits = 6 } },
 		},
 	},
+	-- Rare farm: no attack; pays its owner Income when each wave ends
+	Roy = {
+		Image = unitImage("Roy", 17, 26),
+		Rarity = "Rare",
+		Type = "Farm",
+		Cost = 300,
+		PlaceLimit = 2,
+		BeamColor = Color3.fromRGB(190, 150, 90),
+		Levels = {
+			{ Damage = 0, Range = 8, Cooldown = 1, Income = 60 },
+			{ Cost = 250, Name = "Bigger Harvest", Damage = 0, Range = 8, Cooldown = 1, Income = 100 },
+			{ Cost = 500, Name = "Second Field", Damage = 0, Range = 8, Cooldown = 1, Income = 180 },
+			{ Cost = 1000, Name = "Market Day", Damage = 0, Range = 8, Cooldown = 1, Income = 320 },
+			{ Cost = 2000, Name = "Golden Shovel", Damage = 0, Range = 8, Cooldown = 1, Income = 550 },
+		},
+	},
+	-- Epic buffer: no attack; every unit in her range deals Buff more damage
+	FlowerMage = {
+		DisplayName = "Flower Mage",
+		Image = unitImage("FlowerMage", 15, 26),
+		Rarity = "Epic",
+		Type = "Buffer",
+		Cost = 500,
+		PlaceLimit = 2,
+		BeamColor = Color3.fromRGB(255, 150, 200),
+		Levels = {
+			{ Damage = 0, Range = 16, Cooldown = 1, Buff = 0.2 },
+			{ Cost = 400, Name = "Blooming Aura", Damage = 0, Range = 18, Cooldown = 1, Buff = 0.2 },
+			{ Cost = 800, Name = "Sweet Pollen", Damage = 0, Range = 20, Cooldown = 1, Buff = 0.25 },
+			{ Cost = 1600, Name = "Spring Chorus", Damage = 0, Range = 22, Cooldown = 1, Buff = 0.3 },
+			{ Cost = 3000, Name = "Eternal Garden", Damage = 0, Range = 26, Cooldown = 1, Buff = 0.35 },
+		},
+	},
+	-- Legendary summoner: sends puppets from the castle down the path. Damage = a puppet's max HP
+	-- (Range only draws the ring; the puppets go wherever the path goes)
+	PuppetNinja = {
+		DisplayName = "Puppet Ninja",
+		Image = unitImage("PuppetNinja", 11, 26),
+		Rarity = "Legendary",
+		Type = "Summoner",
+		Summon = "Puppet",
+		Cost = 900,
+		BeamColor = Color3.fromRGB(200, 60, 60),
+		Levels = {
+			{ Damage = 40, Range = 12, Cooldown = 10 },
+			{ Cost = 700, Name = "Chakra Strings", Damage = 60, Range = 12, Cooldown = 10 },
+			{ Cost = 1400, Name = "Puppet Army", Damage = 90, Range = 12, Cooldown = 10 },
+			{ Cost = 2800, Name = "Iron Puppets", Damage = 140, Range = 12, Cooldown = 10 },
+			{ Cost = 5000, Name = "Hundred Puppets", Damage = 200, Range = 12, Cooldown = 10 },
+		},
+	},
+	-- Developer only (Unobtainable, given by GameServer): kills every enemy on the map every 5 seconds
+	LordMoon = {
+		DisplayName = "Lord Moon",
+		Image = unitImage("LordMoon", 27, 30),
+		Rarity = "Secret",
+		Type = "Wipe",
+		Unobtainable = true,
+		Cost = 1000,
+		PlaceLimit = 1,
+		CanHitAir = true,
+		BeamColor = Color3.fromRGB(110, 240, 220),
+		Levels = {
+			{ Damage = 0, Range = 6, Cooldown = 5 },
+		},
+	},
 }
+
+-- The unit's name as shown in the UI, upper case: its DisplayName (e.g. "Flower Mage"), or its key
+function Config.DisplayName(unitName)
+	local unit = Config.Units[unitName]
+	return string.upper(unit and unit.DisplayName or tostring(unitName))
+end
+
+-- What a unit does instead of shooting (Config.UnitTypes), or nil for a normal attacking unit
+function Config.UnitType(unitName)
+	local unit = Config.Units[unitName]
+	return unit and unit.Type or nil
+end
+
+-- One short line about a unit's main stat at refine level `stats` (shop and inventory cards)
+function Config.UnitSummary(unitName, stats)
+	local kind = Config.UnitType(unitName)
+	local function num(v) return (("%.1f"):format(v):gsub("%.0$", "")) end
+	if kind == "Farm" then
+		return ("INCOME $%d / WAVE"):format(stats.Income or 0)
+	elseif kind == "Buffer" then
+		return ("BUFF +%d%%  RNG %s"):format(math.floor((stats.Buff or 0) * 100 + 0.5), num(stats.Range))
+	elseif kind == "Summoner" then
+		return ("PUPPET %s HP  EVERY %ss"):format(num(stats.Damage), num(stats.Cooldown))
+	elseif kind == "Wipe" then
+		return ("KILLS ALL EVERY %ss"):format(num(stats.Cooldown))
+	end
+	return ("DMG %s  RNG %s"):format(num(stats.Damage), num(stats.Range))
+end
 
 function Config.GetStats(unitName, level)
 	local unit = Config.Units[unitName]
@@ -421,6 +559,13 @@ Config.Materials = {
 }
 Config.MaterialOrder = { "WispEssence", "VoidCrystal" }
 
+-- These accounts (UserIds) get one copy of every unit they don't own yet each time they join,
+-- Unobtainable ones (Lord Moon) included. For the team's own testing.
+Config.AllUnitsUserIds = {
+	[2366317550] = "AlphaboCG13",
+	[152511219] = "FayMasterGame",
+}
+
 -- every new player starts with these units: { UnitName = copies }
 Config.StarterUnits = { Herobrine = 1 }
 Config.StarterGems = 300
@@ -489,7 +634,7 @@ function Config.BannerPool(bannerId, rarity)
 	local featured = banner and banner.Featured or {}
 	local list = {}
 	for name, unit in pairs(Config.Units) do
-		if unit.Rarity == rarity and (not unit.Limited or featured[rarity] == name) then
+		if unit.Rarity == rarity and not unit.Unobtainable and (not unit.Limited or featured[rarity] == name) then
 			table.insert(list, name)
 		end
 	end

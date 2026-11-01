@@ -364,7 +364,7 @@ local PLACEHOLDER_W, PLACEHOLDER_H = 14, 18
 
 -- The unit's uploaded image settings, or nil when it should use its character grid
 local function imageDef(name)
-	local unit = Config.Units[name]
+	local unit = Config.Units[name] or Config.Sprites[name] -- Sprites: summons and other non-unit images
 	local image = unit and unit.Image
 	if type(image) == "table" and type(image.Id) == "string" and image.Id ~= "" then
 		return image

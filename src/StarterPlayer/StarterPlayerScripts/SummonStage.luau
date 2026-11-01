@@ -79,7 +79,7 @@ function SummonStage.new(ui, parent, callbacks)
 		local stroke = make("UIStroke", { Color = C.rgb(70, 82, 110), Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, f)
 		sprite(f, name, px, UDim2.new(0.5, 0, 0, withName and h * 0.44 or h * 0.45))
 		if withName then
-			label(f, { Position = UDim2.new(0, 0, 1, -34), Size = UDim2.new(1, 0, 0, 24), Text = string.upper(name), TextSize = 16 })
+			label(f, { Position = UDim2.new(0, 0, 1, -34), Size = UDim2.new(1, 0, 0, 24), Text = Config.DisplayName(name), TextSize = 16 })
 		end
 		make("Frame", { Position = UDim2.new(0, 0, 1, -6), Size = UDim2.new(1, 0, 0, 6), BackgroundColor3 = Config.Rarities[rarity].Color, BorderSizePixel = 0 }, f)
 		return f, stroke
@@ -248,7 +248,7 @@ function SummonStage.new(ui, parent, callbacks)
 		local art = sprite(box, result.Unit, 8, UDim2.fromOffset(160, 168))
 		local pop = make("UIScale", { Scale = 0.4 }, art)
 		tween(pop, 0.5, { Scale = 1 }, Enum.EasingStyle.Back)
-		label(box, { Position = UDim2.new(0, 0, 1, -54), Size = UDim2.new(1, 0, 0, 28), Text = string.upper(result.Unit), TextSize = 22 })
+		label(box, { Position = UDim2.new(0, 0, 1, -54), Size = UDim2.new(1, 0, 0, 28), Text = Config.DisplayName(result.Unit), TextSize = 22 })
 		if result.New then
 			label(box, { Position = UDim2.fromOffset(20, 50), Size = UDim2.fromOffset(60, 20), Text = "NEW!", TextSize = 16, TextColor3 = C.GREEN })
 		end
@@ -276,7 +276,7 @@ function SummonStage.new(ui, parent, callbacks)
 				label(f, { AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -6, 0, 0), Size = UDim2.fromOffset(40, 20), Text = "NEW", TextSize = 12, TextColor3 = C.GREEN, TextXAlignment = Enum.TextXAlignment.Right })
 			end
 			sprite(f, r.Unit, 3, UDim2.new(0.5, 0, 0, 72))
-			label(f, { Position = UDim2.new(0, 0, 1, -26), Size = UDim2.new(1, 0, 0, 22), Text = string.upper(r.Unit), TextSize = 15 })
+			label(f, { Position = UDim2.new(0, 0, 1, -26), Size = UDim2.new(1, 0, 0, 22), Text = Config.DisplayName(r.Unit), TextSize = 15 })
 			local pop = make("UIScale", { Scale = 0 }, f)
 			task.delay((i - 1) * 0.06, function()
 				tween(pop, rarity.Order >= 3 and 0.45 or 0.25, { Scale = 1 }, Enum.EasingStyle.Back)
