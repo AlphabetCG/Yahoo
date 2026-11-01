@@ -446,7 +446,7 @@ Codes = { RELEASE = { Rewards = { Gems = 300, Items = { ReforgeStone = 2 } }, Ex
   - Call `saveSoon` after anything valuable (summon, reforge, purchase, claim).
   - Purchases must save *before* acknowledging the receipt.
 - **Profile size:** keep it under about 100 KB. Unit instances with short keys stay small; enforce `MaxUnitsOwned`.
-- **Mobile:** the UI is mouse/keyboard-only today (hover health bars, right-click cancel, mouse-wheel zoom). Every new screen needs touch-friendly buttons, and the HUD needs a cancel button and a zoom control for touch.
+- **Mobile:** the HUD has touch controls (tap to aim + PLACE / CANCEL buttons, view lock, pinch and + / - zoom, tap-to-show health bars) and shrinks to fit small screens. Every new screen needs touch-friendly buttons and must fit a phone screen (scale its panel like the inventory does).
 - **Testing:** add server-side debug commands for Studio only, behind `RunService:IsStudio()`: give Gems, give unit, set round, simulate pulls, dump the economy.
 
 ---
