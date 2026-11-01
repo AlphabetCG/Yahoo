@@ -143,6 +143,25 @@ PlayerData.OnProfileLoaded(function(player, profile)
 	player:SetAttribute("VoteAutoSkip", profile.Settings.AutoSkip)
 	recomputeVotes()
 end)
+
+-- Developers (Studio, the experience's owner, or the owner of its group) get the Unobtainable units
+-- (Lord Moon). They can never drop from a banner.
+local function isDeveloper(player)
+	if RunService:IsStudio() then return true end
+	if game.CreatorType == Enum.CreatorType.User then return player.UserId == game.CreatorId end
+	local ok, rank = pcall(function() return player:GetRankInGroup(game.CreatorId) end)
+	return ok and rank == 255
+end
+-- ...and the accounts in Config.AllUnitsUserIds get one copy of every unit they're missing
+PlayerData.OnProfileLoaded(function(player)
+	local allUnits = Config.AllUnitsUserIds[player.UserId] ~= nil
+	if not allUnits and not isDeveloper(player) then return end
+	for name, unit in pairs(Config.Units) do
+		if (allUnits or unit.Unobtainable) and not PlayerData.Owns(player, name) then
+			PlayerData.AddUnit(player, name, 1)
+		end
+	end
+end)
 workspace:SetAttribute("HostId", 0)
 updateHost()
 
@@ -177,6 +196,29 @@ local path = USE_TELEPORT and {} or Config.GetPath() -- the Lobby has no map
 if not USE_TELEPORT and #path < 2 then
 	warn("GameServer: Workspace.Waypoints needs at least 2 parts named 1, 2, 3... (is this place synced with Rojo?)")
 end
+-- pathAt[i] = studs along the path at waypoint i (enemy Dist uses the same measure)
+local pathAt = { 0 }
+for i = 2, #path do pathAt[i] = pathAt[i - 1] + (path[i] - path[i - 1]).Magnitude end
+local pathLength = pathAt[#path] or 0
+
+-- the point `dist` studs along the path
+local function pathPoint(dist)
+	for i = 2, #path do
+		if dist <= pathAt[i] then
+			local seg = pathAt[i] - pathAt[i - 1]
+			return path[i - 1]:Lerp(path[i], seg > 0 and (dist - pathAt[i - 1]) / seg or 0)
+		end
+	end
+	return path[#path]
+end
+
+-- summons (Summoner units) walk the path backwards; clients draw them from this folder
+local summonsFolder = workspace:FindFirstChild("Summons")
+if not summonsFolder then
+	summonsFolder = Instance.new("Folder")
+	summonsFolder.Name = "Summons"
+	summonsFolder.Parent = workspace
+end
 
 -- ===== Game state (shared with clients through attributes on Workspace) =====
 -- State: "Menu" | "Playing" | "GameOver" | "Victory"
@@ -195,6 +237,7 @@ local stageKills = 0         -- enemies defeated this stage (for the rewards)
 local stageBossKilled = false
 local pendingHits = {}    -- shots in flight: { Enemy, Damage, Owner, Due } (damage lands when the bolt arrives)
 local towers = {}         -- list of tower entries (see createTower)
+local summons = {}        -- puppets on the path (see spawnSummon)
 local towerByModel = {}   -- Model -> tower entry
 local matchRequested = false -- set when the host presses START MATCH during the prep phase
 local skipRequested = false  -- set when everyone in the match agreed to skip the wave
@@ -333,6 +376,8 @@ local function clearEnemies()
 	table.clear(enemies)
 	lastSpawned = nil
 	enemiesFolder:ClearAllChildren()
+	table.clear(summons)
+	summonsFolder:ClearAllChildren()
 end
 
 local function clearAll()
@@ -625,11 +670,114 @@ local function isBetter(mode, e, d, best, bestD)
 	return false
 end
 
+-- ===== Summons (Summoner units) =====
+-- A summon starts at the castle and walks the path backwards. Every enemy it touches (Flying ones
+-- too) takes damage up to the summon's remaining HP, and the summon loses that much HP.
+local function spawnSummon(t)
+	local def = Config.Summons[Config.Units[t.UnitName].Summon or ""]
+	if not def or pathLength <= 0 then return end
+	local part = Instance.new("Part")
+	part.Name = "Summon"
+	part.Size = Vector3.new(2, 2, 2)
+	part.Transparency = 1 -- clients draw the sprite
+	part.Anchored = true
+	part.CanCollide = false
+	part.CanQuery = false
+	part.CanTouch = false
+	part.Position = path[#path] + Vector3.new(0, ENEMY_HEIGHT, 0)
+	part:SetAttribute("Sprite", def.Sprite)
+	part:SetAttribute("Name", def.Name or "")
+	part:SetAttribute("MaxHealth", t.Stats.Damage)
+	part:SetAttribute("Health", t.Stats.Damage)
+	part:SetAttribute("OwnerId", t.Owner.UserId)
+	part.Parent = summonsFolder
+	table.insert(summons, {
+		Part = part, Tower = t, Owner = t.Owner,
+		Health = t.Stats.Damage, Dist = pathLength, Speed = def.Speed, Radius = def.Radius,
+	})
+end
+
+local function updateSummons(dt)
+	for i = #summons, 1, -1 do
+		local s = summons[i]
+		s.Dist -= s.Speed * dt
+		for _, e in ipairs(table.clone(enemies)) do -- a copy: a killed enemy leaves `enemies`
+			if s.Health <= 1e-6 then break end
+			if not e.Dead and math.abs(e.Dist - s.Dist) <= e.Radius + s.Radius then -- Flying ones too
+				local dmg = math.min(s.Health, e.Health + (e.Shield or 0))
+				s.Health -= dmg
+				damageEnemy(e, dmg, s.Owner)
+			end
+		end
+		if s.Health <= 1e-6 or s.Dist <= 0 then
+			table.remove(summons, i)
+			s.Part:Destroy()
+		else
+			s.Part.Position = pathPoint(s.Dist) + Vector3.new(0, ENEMY_HEIGHT, 0)
+			s.Part:SetAttribute("Health", s.Health)
+		end
+	end
+end
+
+-- the strongest Buffer bonus reaching tower t (0.2 = +20% damage); buffs don't stack
+local function buffFor(t, buffers)
+	local best = 0
+	local p = t.Root.Position
+	for _, b in ipairs(buffers) do
+		if b ~= t and b.Stats.Buff > best then
+			local q = b.Root.Position
+			if Vector2.new(p.X - q.X, p.Z - q.Z).Magnitude <= b.Stats.Range then best = b.Stats.Buff end
+		end
+	end
+	return best
+end
+
+-- Farm units pay their owner when a wave ends (called when the next round starts)
+local function payFarms()
+	for _, t in ipairs(towers) do
+		if t.Type == "Farm" and t.Model.Parent and t.Owner:GetAttribute("InMatch") then
+			giveMoney(t.Owner, t.Stats.Income or 0, "Farm")
+		end
+	end
+end
+
+local buffers = {}
 local function updateTowers()
+	table.clear(buffers)
+	for _, t in ipairs(towers) do
+		if t.Type == "Buffer" and t.Model.Parent then table.insert(buffers, t) end
+	end
+	-- each attacking unit's current buff (the Buff attribute lets the refine panel show it)
+	for _, t in ipairs(towers) do
+		if not t.Type then
+			local buff = buffFor(t, buffers)
+			if t.Buff ~= buff then
+				t.Buff = buff
+				t.Model:SetAttribute("Buff", buff)
+			end
+		end
+	end
 	for i = #towers, 1, -1 do
 		local t = towers[i]
 		if not t.Model.Parent then
 			table.remove(towers, i)
+		elseif t.Type == "Farm" or t.Type == "Buffer" then
+			continue -- no attack (see payFarms / buffFor)
+		elseif t.Type == "Summoner" then
+			if gameTime - t.Last >= t.Stats.Cooldown then
+				t.Last = gameTime
+				spawnSummon(t)
+			end
+		elseif t.Type == "Wipe" then
+			if gameTime - t.Last >= t.Stats.Cooldown and #enemies > 0 then
+				t.Last = gameTime
+				for _, e in ipairs(table.clone(enemies)) do
+					if not e.Dead then
+						shotRemote:FireAllClients(t.Model, e.Part, e.Part.Position, nil)
+						damageEnemy(e, e.Health + (e.Shield or 0) + 1, t.Owner)
+					end
+				end
+			end
 		elseif t.Mode ~= "None" and gameTime - t.Last >= t.Stats.Cooldown then
 			local origin = t.Root.Position
 			local o2 = Vector2.new(origin.X, origin.Z)
@@ -655,10 +803,11 @@ local function updateTowers()
 				end
 				local targetPos = best.Part.Position
 				faceTarget(t.Model, targetPos)
-				best.Pending += t.Stats.Damage -- only the target counts against overkill
+				local damage = t.Stats.Damage * (1 + (t.Buff or 0)) -- Flower Mage and other Buffers
+				best.Pending += damage -- only the target counts against overkill
 				local attack = t.Attack
 				table.insert(pendingHits, {
-					Enemy = best, Damage = t.Stats.Damage, Ability = t.Stats.Ability,
+					Enemy = best, Damage = damage, Ability = t.Stats.Ability,
 					Owner = t.Owner, Due = now + Config.ShotTravel,
 					Attack = attack, Origin = o2, Aim = Vector2.new(targetPos.X, targetPos.Z), Range = t.Stats.Range,
 					CanHitAir = t.CanHitAir,
@@ -799,6 +948,7 @@ local function createTower(player, unitName, pos, instance)
 		Attack = Config.AttackOf(unitName, 1), -- shape of the attack (Single / Splash / Line / Cone / Circle)
 		UnitLevel = unitLevel,
 		CanHitAir = unit.CanHitAir == true, -- can it hit Flying enemies
+		Type = unit.Type,                     -- nil (attacks), "Farm", "Buffer", "Summoner" or "Wipe"
 		BeamColor = unit.BeamColor,
 		Last = -math.huge,
 		Mode = "First",
@@ -1060,6 +1210,7 @@ local function startGame(stageId, members, host)
 			if r > 1 then
 				-- bonus for reaching the next round (shared like pops)
 				giveTeamMoney(Config.RoundBonus + (r - 2) * Config.RoundBonusStep, "RoundBonus")
+				payFarms() -- the last wave has ended for the farms too
 			end
 			progress = spawnRound(r)
 
@@ -1441,6 +1592,8 @@ RunService.Heartbeat:Connect(function(dt)
 	updateHits()
 	if workspace:GetAttribute("State") ~= "Playing" then return end
 	updateStatus(gdt)
+	if workspace:GetAttribute("State") ~= "Playing" then return end
+	updateSummons(gdt)
 	if workspace:GetAttribute("State") ~= "Playing" then return end
 	updateTowers()
 end)

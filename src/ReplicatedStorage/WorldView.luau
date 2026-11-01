@@ -46,6 +46,7 @@ local started = false
 local alwaysBars = false -- show every enemy's health bar (otherwise only the one under the mouse)
 local TAP_BAR_SECONDS = 3 -- touch screens: how long a tapped enemy keeps its health bar
 local enemies, towers, effects = {}, {}, {}
+local summons = {} -- [Part] = vis: puppets walking the path (Summoner units, workspace.Summons)
 local connections = {}
 local ghost, selected
 -- the castle at the end of the path: where buildMap drew it (art pixels: x0, z0, x1, z1) and the
@@ -621,6 +622,65 @@ local function addTower(model)
 	end))
 end
 
+-- ===================== SUMMONS =====================
+-- A summon (Puppet Ninja's puppet) walks from the castle back along the path. It always shows a
+-- green health bar: its HP is what it can still deal.
+local SUMMON_FILL, SUMMON_BACK = rgb(70, 200, 80), rgb(16, 64, 24)
+local function removeSummon(part)
+	local vis = summons[part]
+	if not vis then return end
+	summons[part] = nil
+	for _, c in ipairs(vis.conns) do c:Disconnect() end
+	vis.container:Destroy()
+	burst(vis.x, vis.z - 3, rgb(230, 230, 240), 6)
+end
+
+local function addSummon(part)
+	if summons[part] or not part:IsA("BasePart") then return end
+	local spriteName = part:GetAttribute("Sprite") or "Wisp"
+	local w, h = PixelArt.size(spriteName)
+	local vis = { part = part, conns = {}, w = w, h = h, x = part.Position.X, z = part.Position.Z, phase = math.random() * 6.28 }
+	local container = Instance.new("Frame")
+	container.Name = "Summon"
+	container.BackgroundTransparency = 1
+	container.BorderSizePixel = 0
+	container.Size = UDim2.fromOffset(w, h)
+	container.Visible = false -- shown after the first update has put it in the right place
+	container.Parent = entityScaler
+	rect(container, 1, h - 2, w - 2, 2, BLACK, 0.6) -- shadow
+	vis.right = PixelArt.sprite(spriteName, { flip = false })
+	vis.left = PixelArt.sprite(spriteName, { flip = true })
+	vis.right.Parent, vis.left.Parent = container, container
+	vis.right.Visible = false
+	-- health bar: like an enemy's (name, bar, "hp/max"), but green and always shown
+	local bw, bh, nameH, textSize = 32, 8, 8, 6
+	local bar = Instance.new("Frame")
+	bar.Name = "HealthBar"
+	bar.BackgroundTransparency = 1
+	bar.BorderSizePixel = 0
+	bar.Position = UDim2.fromOffset(math.floor((w - bw) / 2), -bh - nameH - 1)
+	bar.Size = UDim2.fromOffset(bw, nameH + bh)
+	bar.Parent = container
+	barText(bar, 0, 0, bw, nameH, part:GetAttribute("Name") or "", textSize)
+	rect(bar, 0, nameH, bw, bh, BLACK)
+	rect(bar, 1, nameH + 1, bw - 2, bh - 2, SUMMON_BACK)
+	vis.fill = rect(bar, 1, nameH + 1, bw - 2, bh - 2, SUMMON_FILL)
+	local hpLabel = barText(bar, 0, nameH, bw, bh, "", textSize)
+	local function updateHealth()
+		local maxHp = math.max(1e-6, part:GetAttribute("MaxHealth") or 1)
+		local hp = math.clamp(part:GetAttribute("Health") or 0, 0, maxHp)
+		vis.fill.Size = UDim2.fromOffset(math.max(hp > 0 and 1 or 0, math.floor((bw - 2) * hp / maxHp + 0.5)), bh - 2)
+		hpLabel.Text = shortNumber(math.ceil(hp - 1e-6)) .. "/" .. shortNumber(math.ceil(maxHp - 1e-6))
+	end
+	updateHealth()
+	vis.container = container
+	summons[part] = vis
+	table.insert(vis.conns, part:GetAttributeChangedSignal("Health"):Connect(updateHealth))
+	table.insert(vis.conns, part.AncestryChanged:Connect(function(_, parent)
+		if not parent then removeSummon(part) end
+	end))
+end
+
 -- ===================== RINGS (range circles) =====================
 local function makeRing(rangeStuds, color)
 	local R = math.floor(rangeStuds / PXS + 0.5)
@@ -997,6 +1057,27 @@ function WorldView.update(dt)
 		end
 	end
 
+	-- summons glide like enemies and face the way they walk
+	for part, vis in pairs(summons) do
+		if not part:IsDescendantOf(workspace) then
+			removeSummon(part)
+			continue
+		end
+		local p = part.Position
+		local dx = p.X - vis.x
+		vis.x += dx * alpha
+		vis.z += (p.Z - vis.z) * alpha
+		if math.abs(dx) > 0.01 then
+			vis.right.Visible = dx > 0
+			vis.left.Visible = dx <= 0
+		end
+		local px, pz = math.floor(vis.x / PXS + 0.5), math.floor(vis.z / PXS + 0.5)
+		local step = (math.sin(now * 9 + vis.phase) > 0) and -1 or 0
+		vis.container.Position = UDim2.fromOffset(px - vis.w // 2, pz - vis.h + 1 + step)
+		vis.container.ZIndex = 2000 + pz
+		vis.container.Visible = true
+	end
+
 	-- health bars: the enemy under the mouse, a tapped one for a moment (or all of them when the
 	-- setting is on). With touch there is no hover: the "mouse" would stay where the last finger was.
 	local hovered = nil
@@ -1145,6 +1226,9 @@ function WorldView.start(parent, opts)
 		for _, e in ipairs(enemiesFolder:GetChildren()) do addEnemy(e) end
 		for _, t in ipairs(towersFolder:GetChildren()) do addTower(t) end
 		track(enemiesFolder.ChildAdded:Connect(addEnemy))
+		local summonsFolder = workspace:WaitForChild("Summons")
+		for _, s in ipairs(summonsFolder:GetChildren()) do addSummon(s) end
+		track(summonsFolder.ChildAdded:Connect(addSummon))
 		track(towersFolder.ChildAdded:Connect(function(model)
 			-- wait a moment so the model's parts and attributes have arrived
 			task.defer(addTower, model)
@@ -1181,6 +1265,8 @@ function WorldView.stop()
 	table.clear(connections)
 	for _, vis in pairs(enemies) do for _, c in ipairs(vis.conns) do c:Disconnect() end end
 	for _, vis in pairs(towers) do for _, c in ipairs(vis.conns) do c:Disconnect() end end
+	for _, vis in pairs(summons) do for _, c in ipairs(vis.conns) do c:Disconnect() end end
+	table.clear(summons)
 	table.clear(enemies)
 	table.clear(towers)
 	table.clear(effects)
