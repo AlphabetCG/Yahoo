@@ -32,7 +32,7 @@
     "StarterGui": {
       "$className": "StarterGui",
       "$properties": {
-        "ScreenOrientation": "Sensor",
+        "ScreenOrientation": "LandscapeSensor",
         "SerializedOverrides": {
           "BinaryString": ""
         }

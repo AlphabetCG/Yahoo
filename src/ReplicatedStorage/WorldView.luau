@@ -30,6 +30,11 @@ local SLOW_FX = rgb(110, 210, 255)
 -- state
 local rootFrame, mapScaler, entityScaler
 local S = 4 -- screen pixels per art pixel
+-- the zoom steps S can take. The map starts at the biggest whole step that fits; the steps below 2
+-- let small screens (phones) zoom out to see the whole map
+local ZOOM_LEVELS = { 1, 1.5, 2, 3, 4, 5, 6, 7, 8 }
+local MAX_ZOOM_IN = 3 -- steps above the starting zoom
+local baseZoom = 3 -- index in ZOOM_LEVELS of the starting zoom (set by layout)
 local zoomDelta = 0
 local originX, originY = 0, 0
 -- camera pan, in art pixels (so zooming keeps the same spot in view); clamped to the map
@@ -39,9 +44,13 @@ local rightInset = 200
 local topInset, bottomInset = 176, 156 -- screen space kept free for the HUD plates / prep panel
 local started = false
 local alwaysBars = false -- show every enemy's health bar (otherwise only the one under the mouse)
+local TAP_BAR_SECONDS = 3 -- touch screens: how long a tapped enemy keeps its health bar
 local enemies, towers, effects = {}, {}, {}
 local connections = {}
 local ghost, selected
+-- the castle at the end of the path: where buildMap drew it (art pixels: x0, z0, x1, z1) and the
+-- base's health bar over it (always shown)
+local castle = nil
 
 local function track(conn)
 	table.insert(connections, conn)
@@ -77,8 +86,9 @@ local function layout()
 	local freeW = size.X - rightInset
 	local availW = freeW - 40
 	local availH = size.Y - topInset - bottomInset
-	local base = math.max(2, math.min(math.floor(availW / 340), math.floor(availH / 140)))
-	S = math.clamp(base + zoomDelta, 2, 8)
+	local base = math.clamp(math.min(math.floor(availW / 340), math.floor(availH / 140)), 2, 8)
+	baseZoom = table.find(ZOOM_LEVELS, base)
+	S = ZOOM_LEVELS[math.clamp(baseZoom + zoomDelta, 1, #ZOOM_LEVELS)]
 	originX = freeW / 2 + panX * S
 	originY = topInset + availH / 2 + panZ * S
 	mapHolder.Position = UDim2.fromOffset(originX, originY)
@@ -169,6 +179,7 @@ local function buildMap()
 		rect(map, cx + 4, cz - 1, 6, 12, rgb(70, 36, 28))
 		rect(map, cx + 6, cz - 24, 1, 8, rgb(70, 60, 60))
 		rect(map, cx + 7, cz - 24, 7, 4, rgb(214, 56, 60))
+		castle = { x0 = cx - 2, z0 = cz - 24, x1 = cx + 16, z1 = cz + 13 }
 	end
 
 	-- pine trees around the edges (back to front so lower ones draw on top)
@@ -391,6 +402,38 @@ local function updateBar(vis)
 		vis.shieldFill.Size = UDim2.fromOffset(math.floor(vis.barMax * shield / vis.maxShield + 0.5), 2)
 		vis.shieldFill.Visible = shield > 0
 	end
+end
+
+-- the base's health bar ("BASE" + lives left), above the castle on the entity layer
+local function buildCastleBar()
+	if not castle then return end
+	local bw, bh, nameH, textSize = 44, 10, 9, 7
+	local root = Instance.new("Frame")
+	root.Name = "BaseHealthBar"
+	root.BackgroundTransparency = 1
+	root.BorderSizePixel = 0
+	root.Position = UDim2.fromOffset(math.floor((castle.x0 + castle.x1 - bw) / 2), castle.z0 - bh - nameH - 2)
+	root.Size = UDim2.fromOffset(bw, nameH + bh)
+	root.ZIndex = 2900 -- over the enemies and units, under the placement preview
+	root.Parent = entityScaler
+	barText(root, 0, 0, bw, nameH, "BASE", textSize)
+	rect(root, 0, nameH, bw, bh, BLACK)
+	rect(root, 1, nameH + 1, bw - 2, bh - 2, BAR_BACK)
+	castle.fill = rect(root, 1, nameH + 1, bw - 2, bh - 2, BAR_FILL)
+	castle.label = barText(root, 0, nameH, bw, bh, "", textSize)
+	castle.barMax, castle.barH = bw - 2, bh - 2
+	castle.root = root
+end
+
+-- green, then yellow below half, red below a quarter (like the old HUD lives bar)
+local function updateCastleBar()
+	local lives = math.max(0, workspace:GetAttribute("Lives") or 0)
+	if castle.lives == lives then return end
+	castle.lives = lives
+	local frac = math.clamp(lives / Config.StartLives, 0, 1)
+	castle.fill.Size = UDim2.fromOffset(math.floor(castle.barMax * frac + 0.5), castle.barH)
+	castle.fill.BackgroundColor3 = (frac > 0.5) and rgb(84, 204, 84) or ((frac > 0.25) and rgb(230, 190, 60) or rgb(224, 70, 70))
+	castle.label.Text = shortNumber(lives) .. "/" .. shortNumber(Config.StartLives)
 end
 
 local function removeEnemy(part)
@@ -870,12 +913,45 @@ function WorldView.setAlwaysHealthBars(on)
 	alwaysBars = on and true or false
 end
 
+-- the enemy drawn closest to worldPos, within `reach` (x its size) studs of its body
+local function enemyNear(worldPos, reach)
+	local p = Vector2.new(worldPos.X, worldPos.Z)
+	local best, bestDist = nil, math.huge
+	for _, vis in pairs(enemies) do
+		local k = vis.boss and Config.Boss.Scale or 1
+		local d = (p - Vector2.new(vis.x, vis.z - 2.5 * k)).Magnitude
+		if d <= reach * k and d < bestDist then
+			best, bestDist = vis, d
+		end
+	end
+	return best
+end
+
+-- Touch screens have no hover: a tap shows the health bar of the enemy under the finger for a moment
+function WorldView.revealHealthBar(worldPos)
+	local vis = enemyNear(worldPos, 5)
+	if vis then vis.barUntil = os.clock() + TAP_BAR_SECONDS end
+end
+
+-- The HUD shrinks on small screens, so the space it covers (in screen pixels) changes with it
+function WorldView.setInsets(right, top, bottom)
+	rightInset, topInset, bottomInset = right, top, bottom
+end
+
+-- The lock button in the HUD: while locked, the view stays as it is (no panning, no zooming)
+local viewLocked = false
+function WorldView.setViewLocked(on)
+	viewLocked = on and true or false
+end
+
 function WorldView.zoom(delta)
-	zoomDelta = math.clamp(zoomDelta + delta, -1, 3)
+	if viewLocked then return end
+	zoomDelta = math.clamp(zoomDelta + delta, 1 - baseZoom, math.min(MAX_ZOOM_IN, #ZOOM_LEVELS - baseZoom))
 end
 
 -- Moves the map by a screen-pixel delta (drag right = the map moves right)
 function WorldView.pan(dx, dy)
+	if viewLocked then return end
 	panX = math.clamp(panX + dx / S, -PAN_LIMIT_X, PAN_LIMIT_X)
 	panZ = math.clamp(panZ + dy / S, -PAN_LIMIT_Z, PAN_LIMIT_Z)
 end
@@ -921,19 +997,16 @@ function WorldView.update(dt)
 		end
 	end
 
-	-- health bars: the enemy under the mouse (or all of them when the setting is on)
-	local mouse = WorldView.screenToWorld(UserInputService:GetMouseLocation())
-	local mouse2 = Vector2.new(mouse.X, mouse.Z)
-	local hovered, hoveredDist = nil, math.huge
-	for _, vis in pairs(enemies) do
-		local k = vis.boss and Config.Boss.Scale or 1
-		local d = (mouse2 - Vector2.new(vis.x, vis.z - 2.5 * k)).Magnitude
-		if d <= 3.5 * k and d < hoveredDist then
-			hovered, hoveredDist = vis, d
-		end
+	-- health bars: the enemy under the mouse, a tapped one for a moment (or all of them when the
+	-- setting is on). With touch there is no hover: the "mouse" would stay where the last finger was.
+	local hovered = nil
+	if UserInputService:GetLastInputType() ~= Enum.UserInputType.Touch then
+		hovered = enemyNear(WorldView.screenToWorld(UserInputService:GetMouseLocation()), 3.5)
 	end
+	-- the base's bar over the castle is always shown
+	if castle and castle.root then updateCastleBar() end
 	for _, vis in pairs(enemies) do
-		local show = alwaysBars or vis == hovered
+		local show = alwaysBars or vis == hovered or (vis.barUntil or 0) > now
 		if vis.barShown ~= show then
 			vis.barShown = show
 			vis.barRoot.Visible = show
@@ -1061,7 +1134,9 @@ function WorldView.start(parent, opts)
 	entityHolder.ZIndex = 5
 	started = true
 	layout()
+	castle = nil
 	buildMap()
+	buildCastleBar()
 
 	if opts.connect ~= false then
 		-- enemies and units are the invisible parts the server creates
@@ -1109,7 +1184,7 @@ function WorldView.stop()
 	table.clear(enemies)
 	table.clear(towers)
 	table.clear(effects)
-	ghost, selected = nil, nil
+	ghost, selected, castle = nil, nil, nil
 	if rootFrame then rootFrame:Destroy() rootFrame = nil end
 end
 

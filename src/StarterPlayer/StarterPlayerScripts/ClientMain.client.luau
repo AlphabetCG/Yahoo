@@ -10,6 +10,9 @@ local StarterGui = game:GetService("StarterGui")
 
 local player = Players.LocalPlayer
 local playerGui = player:WaitForChild("PlayerGui")
+-- phones and tablets: always landscape (either way up); the UI is laid out for a wide screen.
+-- StarterGui.ScreenOrientation in the project files says the same, this covers places that don't.
+playerGui.ScreenOrientation = Enum.ScreenOrientation.LandscapeSensor
 
 local Config = require(ReplicatedStorage:WaitForChild("Config"))
 local PixelArt = require(ReplicatedStorage:WaitForChild("PixelArt"))
@@ -238,6 +241,31 @@ local function pixelButton(parent, text, size, position, textSize, base, edge, t
 	return b
 end
 
+-- ===== Small screens (phones, tablets) =====
+-- The HUD and the main menu buttons are laid out for a 1280 x 720 screen. scaledRoot puts a frame
+-- with a UIScale in `parent` that shrinks everything inside it on smaller screens; the frame is
+-- sized 1 / scale, so it still covers the whole parent. onScale(scale) runs whenever it changes.
+local function scaledRoot(parent, onScale)
+	local root = make("Frame", { Name = "Scaled", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1, BorderSizePixel = 0 }, parent)
+	local uiScale = make("UIScale", {}, root)
+	local function fit()
+		local view = workspace.CurrentCamera.ViewportSize
+		local s = math.clamp(math.min(view.X / 1280, view.Y / 720), 0.5, 1)
+		uiScale.Scale = s
+		root.Size = UDim2.fromScale(1 / s, 1 / s)
+		if onScale then onScale(s) end
+	end
+	workspace.CurrentCamera:GetPropertyChangedSignal("ViewportSize"):Connect(fit)
+	fit()
+	return root
+end
+
+-- how much a w x h popup must shrink to fit on the screen (1 = it fits as it is)
+local function screenFit(w, h)
+	local view = workspace.CurrentCamera.ViewportSize
+	return math.min(1, (view.X - 24) / w, (view.Y - 24) / h)
+end
+
 -- =====================================================================
 --  THE WORLD (2D pixel art map, units, enemies)
 -- =====================================================================
@@ -258,6 +286,7 @@ if PLACE_ROLE ~= "Lobby" then
 end
 
 -- ===== Map camera: mouse wheel zooms; right/middle-drag, WASD / arrow keys or a finger drag pan; C re-centers
+-- (touch: pinching and the + / - buttons zoom, see the Input section and the HUD)
 local DRAG_THRESHOLD = 6   -- pixels a right-drag must move before it counts as panning (a plain right-click cancels)
 local KEY_PAN_SPEED = 700  -- screen pixels per second for WASD / arrow keys
 local mapDrag = nil        -- { Last = Vector2, Moved = bool } while a right/middle mouse button is held
@@ -471,6 +500,13 @@ local menuCurrency = label(menu, {
 	TextXAlignment = Enum.TextXAlignment.Right,
 	Text = "",
 })
+-- the title, buttons and currencies shrink on small screens (the forest scene behind them does not)
+do
+	local root = scaledRoot(menu)
+	for _, g in ipairs({ titleBox, playButton, inventoryButton, summonMenuButton, menuCurrency }) do
+		g.Parent = root
+	end
+end
 
 -- =====================================================================
 --  HUD (respects the Roblox top bar so nothing is hidden under it)
@@ -484,29 +520,10 @@ local hudGui = make("ScreenGui", {
 	ZIndexBehavior = Enum.ZIndexBehavior.Sibling,
 }, playerGui)
 
--- lives: heart + health bar (like the player bar in the reference)
-local livesPlate = pixelPanel(hudGui, { Size = UDim2.fromOffset(236, 44), Position = UDim2.fromOffset(16, 12) })
-make("TextLabel", {
-	Size = UDim2.fromOffset(40, 44),
-	BackgroundTransparency = 1,
-	Text = "\u{2764}",
-	Font = Enum.Font.SourceSansBold,
-	TextSize = 26,
-	TextColor3 = rgb(240, 70, 80),
-}, livesPlate)
-local livesBar = make("Frame", {
-	Position = UDim2.fromOffset(44, 11),
-	Size = UDim2.new(1, -54, 0, 22),
-	BackgroundColor3 = rgb(18, 22, 34),
-	BorderSizePixel = 0,
-}, livesPlate)
-make("UIStroke", { Color = PANEL_EDGE, Thickness = 2, ApplyStrokeMode = Enum.ApplyStrokeMode.Border }, livesBar)
-local livesFill = make("Frame", { Size = UDim2.fromScale(1, 1), BackgroundColor3 = rgb(84, 204, 84), BorderSizePixel = 0 }, livesBar)
-make("Frame", { Size = UDim2.new(1, 0, 0, 4), BackgroundColor3 = WHITE, BackgroundTransparency = 0.75, BorderSizePixel = 0 }, livesFill)
-local livesText = label(livesBar, { Size = UDim2.fromScale(1, 1), TextSize = 16, ZIndex = 3, Text = "" })
+-- (the base's lives are not in the HUD: WorldView shows a health bar over the castle)
 
 -- cash
-local cashPlate = pixelPanel(hudGui, { Size = UDim2.fromOffset(236, 44), Position = UDim2.fromOffset(16, 64) })
+local cashPlate = pixelPanel(hudGui, { Size = UDim2.fromOffset(236, 44), Position = UDim2.fromOffset(16, 12) })
 make("TextLabel", {
 	Size = UDim2.fromOffset(40, 44),
 	BackgroundTransparency = 1,
@@ -599,6 +616,19 @@ local hint = label(hudGui, {
 	Text = "Click to place   -   Right-click or Q to cancel",
 	Visible = false,
 })
+-- shown at the bottom while placing a unit: CANCEL (touch screens have no right-click or Q) and,
+-- on touch, PLACE for the spot the player tapped (see touch below)
+local placeBar = {
+	Frame = make("Frame", {
+		AnchorPoint = Vector2.new(0.5, 1),
+		Position = UDim2.new(0.5, -SHOP_W / 2, 1, -16),
+		Size = UDim2.fromOffset(360, 64),
+		BackgroundTransparency = 1,
+		Visible = false,
+	}, hudGui),
+}
+placeBar.Place = pixelButton(placeBar.Frame, "PLACE", UDim2.fromOffset(170, 64), UDim2.new(0, 85, 0.5, 0), 28, GREY_BTN, GREEN_EDGE, WHITE)
+placeBar.Cancel = pixelButton(placeBar.Frame, "CANCEL", UDim2.fromOffset(170, 64), UDim2.new(1, -85, 0.5, 0), 28, RED_BTN, RED_EDGE, WHITE)
 
 -- ===== Shop panel =====
 local shop = make("Frame", {
@@ -709,6 +739,43 @@ local targetLabel = label(upPanel, {
 
 -- sell button
 local sellButton = pixelButton(upPanel, "SELL", UDim2.new(1, -28, 0, 50), UDim2.new(0.5, 0, 0, 356), 22, RED_BTN, RED_EDGE, WHITE)
+
+-- under the gear: the view lock (the map can't be dragged or zoomed, so a tap can't move it by
+-- accident), then zoom buttons for touch screens (pinching zooms too; a mouse has its wheel)
+do
+	local function sideButton(row, text)
+		local b = pixelButton(hudGui, text, UDim2.fromOffset(48, 48), UDim2.new(1, -(SHOP_W + 36), 0, 36 + 58 * row), 30)
+		b.Font = Enum.Font.SourceSansBold
+		return b
+	end
+	local locked = false
+	local lockButton = sideButton(1, "\u{1F513}")
+	lockButton.TextSize = 24
+	local zoomButtons = {}
+	for i, step in ipairs({ 1, -1 }) do
+		local b = sideButton(1 + i, step > 0 and "+" or "-")
+		b.Visible = UserInputService.TouchEnabled
+		b.MouseButton1Click:Connect(function() WorldView.zoom(step) end)
+		table.insert(zoomButtons, b)
+	end
+	lockButton.MouseButton1Click:Connect(function()
+		locked = not locked
+		WorldView.setViewLocked(locked)
+		lockButton.Text = locked and "\u{1F512}" or "\u{1F513}"
+		setButtonColor(lockButton, locked and rgb(226, 128, 44) or BTN)
+		for _, b in ipairs(zoomButtons) do setButtonColor(b, locked and GREY_BTN or BTN) end
+	end)
+end
+
+-- Small screens: the whole HUD shrinks to fit (see scaledRoot), and the map keeps clear of it
+do
+	local root = scaledRoot(hudGui, function(s)
+		WorldView.setInsets(SHOP_W * s, 176 * s, 156 * s)
+	end)
+	for _, child in ipairs(hudGui:GetChildren()) do
+		if child ~= root then child.Parent = root end
+	end
+end
 
 local function statText(name, cur, nxt, fn)
 	if nxt ~= nil and nxt ~= cur then
@@ -881,16 +948,31 @@ end
 towersFolder.ChildAdded:Connect(function() refreshCards() end)
 towersFolder.ChildRemoved:Connect(function() refreshCards() end)
 
+-- Touch screens: a tap on the map moves the preview of the unit there, PLACE (placeBar) puts it
+-- down. aim = screen position of that tap (nil until the player taps).
+local touch = { aim = nil }
+function touch.active()
+	-- a phone has no mouse; a touch laptop goes by what was used last
+	return UserInputService:GetLastInputType() == Enum.UserInputType.Touch
+		or (UserInputService.TouchEnabled and not UserInputService.MouseEnabled)
+end
+
 local function updateHint()
 	local prep = currentState() == "Playing" and workspace:GetAttribute("Phase") == "Prep"
+	placeBar.Frame.Visible = selectedUnit ~= nil
+	placeBar.Place.Visible = touch.active()
+	-- above the prep panel while it is shown
+	placeBar.Frame.Position = UDim2.new(0.5, -SHOP_W / 2, 1, prep and -146 or -16)
 	if currentState() == "Playing" and not player:GetAttribute("InMatch") then
 		hint.Text = "SPECTATING  -  you join the match at the next round"
 		hint.Visible = true
 	elseif selectedUnit then
-		hint.Text = "Click to place   -   Right-click or Q to cancel"
+		hint.Text = touch.active() and "Tap the map to choose a spot   -   then press PLACE"
+			or "Click to place   -   Right-click or Q to cancel"
 		hint.Visible = true
 	elseif prep then
-		hint.Text = "Place your units before the match begins!   (Right-drag / WASD: move map   C: center)"
+		hint.Text = touch.active() and "Place your units before the match begins!   (Drag: move map   Pinch: zoom)"
+			or "Place your units before the match begins!   (Right-drag / WASD: move map   C: center)"
 		hint.Visible = true
 	else
 		hint.Visible = false
@@ -900,6 +982,7 @@ end
 -- slot = loadout slot to place from (nil = stop placing)
 local function selectUnit(slot)
 	selectedUnit, selectedUid, selectedSlot = nil, nil, nil
+	touch.aim = nil
 	WorldView.clearGhost()
 	local unit = slot and slotUnit(slot)
 	if unit and currentState() == "Playing" and Config.Units[unit.Name] then
@@ -910,6 +993,8 @@ local function selectUnit(slot)
 	updateHint()
 	refreshCards()
 end
+placeBar.Cancel.MouseButton1Click:Connect(function() selectUnit(nil) end)
+UserInputService.LastInputTypeChanged:Connect(updateHint) -- mouse or touch wording
 
 local function makePortrait(parent, name)
 	local box = make("Frame", {
@@ -1179,8 +1264,9 @@ local function showResult(state)
 	rewardsLabel.Text = rewardsText(lastRewards)
 	if not resultShown then
 		resultShown = true
-		resultScale.Scale = 0.75
-		TweenService:Create(resultScale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = 1 }):Play()
+		local fit = screenFit(560, 520) -- smaller on small screens
+		resultScale.Scale = 0.75 * fit
+		TweenService:Create(resultScale, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), { Scale = fit }):Play()
 	end
 end
 
@@ -1199,6 +1285,7 @@ local settingsPanel = pixelPanel(settingsDim, {
 	Position = UDim2.fromScale(0.5, 0.5),
 	Size = UDim2.fromOffset(420, 484),
 })
+make("UIScale", {}, settingsPanel) -- shrinks on small screens (openSettings)
 label(settingsPanel, {
 	Position = UDim2.fromOffset(0, 14),
 	Size = UDim2.new(1, 0, 0, 44),
@@ -1245,7 +1332,8 @@ local noButton = pixelButton(confirmView, "NO, KEEP PLAYING", UDim2.fromOffset(3
 
 local alwaysHealthBars = false
 local function refreshHealthBarsButton()
-	healthBarsButton.Text = alwaysHealthBars and "HEALTH BARS: ALWAYS" or "HEALTH BARS: HOVER"
+	healthBarsButton.Text = alwaysHealthBars and "HEALTH BARS: ALWAYS"
+		or (touch.active() and "HEALTH BARS: TAP" or "HEALTH BARS: HOVER")
 	setButtonColor(healthBarsButton, alwaysHealthBars and GREEN_BTN or BTN)
 end
 refreshHealthBarsButton()
@@ -1262,6 +1350,8 @@ local function closeSettings()
 	confirmView.Visible = false
 end
 local function openSettings()
+	settingsPanel:FindFirstChildOfClass("UIScale").Scale = screenFit(420, 484)
+	refreshHealthBarsButton() -- HOVER or TAP, depending on the last input
 	mainView.Visible = true
 	confirmView.Visible = false
 	settingsDim.Visible = true
@@ -1296,11 +1386,6 @@ local SPEED_COLORS = {
 }
 
 local function refreshHud()
-	local lives = workspace:GetAttribute("Lives") or 0
-	local frac = math.clamp(lives / Config.StartLives, 0, 1)
-	livesFill.Size = UDim2.fromScale(frac, 1)
-	livesFill.BackgroundColor3 = (frac > 0.5) and rgb(84, 204, 84) or ((frac > 0.25) and rgb(230, 190, 60) or rgb(224, 70, 70))
-	livesText.Text = fmt(lives) .. " / " .. fmt(Config.StartLives)
 	cashValue.Text = "$" .. fmt(player:GetAttribute("Money") or 0)
 	local round = workspace:GetAttribute("Round") or 0
 	local totalRounds = workspace:GetAttribute("TotalRounds") or 0
@@ -2056,14 +2141,29 @@ startMatchButton.MouseButton1Click:Connect(function()
 	Remote.BeginMatch:FireServer()
 end)
 
--- the placement preview follows the mouse
+-- the placement preview follows the mouse (touch: it stays where the player tapped)
+-- PLACE is green only when the tapped spot is valid
+local function setPlaceReady(ready)
+	if placeBar.Ready == ready then return end
+	placeBar.Ready = ready
+	setButtonColor(placeBar.Place, ready and GREEN_BTN or GREY_BTN)
+end
 RunService.RenderStepped:Connect(function()
 	if not selectedUnit then return end
-	local pos = WorldView.screenToWorld(UserInputService:GetMouseLocation())
+	local screenPos = UserInputService:GetMouseLocation()
+	if touch.active() then
+		if not touch.aim then -- hidden until the first tap
+			setPlaceReady(false)
+			return
+		end
+		screenPos = touch.aim
+	end
+	local pos = WorldView.screenToWorld(screenPos)
 	local unit = Config.Units[selectedUnit]
 	local canPlace = Config.CanPlace(pos, towersFolder)
 	local affordable = (player:GetAttribute("Money") or 0) >= unit.Cost
 	WorldView.updateGhost(pos, canPlace and affordable)
+	setPlaceReady(canPlace and affordable)
 end)
 
 -- ===== Input =====
@@ -2078,6 +2178,88 @@ UserInputService.InputEnded:Connect(function(input)
 	end
 end)
 
+-- a click (or a confirmed tap) on the map: place the chosen unit there, or select the unit under it.
+-- screenPos is in GetMouseLocation() space (it includes the top bar inset)
+local function clickMap(screenPos)
+	local pos = WorldView.screenToWorld(screenPos)
+	if selectedUnit then
+		if placing then return end
+		placing = true
+		local ok, success, reason = pcall(function()
+			return Remote.PlaceTower:InvokeServer(selectedUid, pos)
+		end)
+		placing = false
+		if ok and success then
+			selectUnit(nil)
+		elseif ok then
+			notify(reason or "Cannot place here")
+		end
+	else
+		local model = WorldView.getTowerAt(pos)
+		if model then selectTower(model) else deselectTower() end
+	end
+end
+
+-- Touch: a tap (a touch that barely moves, with no second finger) acts on the map; dragging pans
+-- (see TouchPan above) and pinching zooms
+do
+	local TAP_SLOP = 12        -- pixels a finger may move and still count as a tap
+	local PINCH_STEP = 1.3     -- how far the fingers must spread (or close) for one zoom step
+	local touches = {}         -- [InputObject] = { Start = Vector3, Multi = bool } for fingers on the map
+	local pinchBase = 1
+
+	local function tapMap(screenPos)
+		if selectedUnit then
+			touch.aim = screenPos -- move the preview here; PLACE puts the unit down
+			return
+		end
+		WorldView.revealHealthBar(WorldView.screenToWorld(screenPos))
+		clickMap(screenPos)
+	end
+
+	placeBar.Place.MouseButton1Click:Connect(function()
+		if not touch.aim then
+			notify("Tap the map to choose a spot first")
+			return
+		end
+		clickMap(touch.aim)
+	end)
+
+	UserInputService.InputBegan:Connect(function(input, processed)
+		if processed or input.UserInputType ~= Enum.UserInputType.Touch then return end
+		local t = { Start = input.Position, Multi = false }
+		if next(touches) then
+			-- a second finger: this is a pinch or a two-finger drag, not a tap
+			t.Multi = true
+			for _, other in pairs(touches) do other.Multi = true end
+		end
+		touches[input] = t
+	end)
+
+	UserInputService.InputEnded:Connect(function(input)
+		local t = touches[input]
+		if not t then return end
+		touches[input] = nil
+		if t.Multi or currentState() ~= "Playing" or (input.Position - t.Start).Magnitude > TAP_SLOP then return end
+		-- InputObject.Position leaves out the top bar; screenToWorld expects it included
+		local inset = game:GetService("GuiService"):GetGuiInset()
+		tapMap(Vector2.new(input.Position.X, input.Position.Y) + inset)
+	end)
+
+	UserInputService.TouchPinch:Connect(function(_, scale, _, state, processed)
+		if processed then return end
+		if state == Enum.UserInputState.Begin then
+			pinchBase = scale
+		elseif scale / pinchBase >= PINCH_STEP then
+			WorldView.zoom(1)
+			pinchBase = scale
+		elseif scale / pinchBase <= 1 / PINCH_STEP then
+			WorldView.zoom(-1)
+			pinchBase = scale
+		end
+	end)
+end
+
 local UNIT_KEYS = {
 	Enum.KeyCode.One, Enum.KeyCode.Two, Enum.KeyCode.Three,
 	Enum.KeyCode.Four, Enum.KeyCode.Five, Enum.KeyCode.Six,
@@ -2085,24 +2267,7 @@ local UNIT_KEYS = {
 UserInputService.InputBegan:Connect(function(input, processed)
 	if currentState() ~= "Playing" then return end
 	if input.UserInputType == Enum.UserInputType.MouseButton1 then
-		if processed then return end
-		local pos = WorldView.screenToWorld(UserInputService:GetMouseLocation())
-		if selectedUnit then
-			if placing then return end
-			placing = true
-			local ok, success, reason = pcall(function()
-				return Remote.PlaceTower:InvokeServer(selectedUid, pos)
-			end)
-			placing = false
-			if ok and success then
-				selectUnit(nil)
-			elseif ok then
-				notify(reason or "Cannot place here")
-			end
-		else
-			local model = WorldView.getTowerAt(pos)
-			if model then selectTower(model) else deselectTower() end
-		end
+		if not processed then clickMap(UserInputService:GetMouseLocation()) end
 	elseif not processed and input.UserInputType == Enum.UserInputType.Keyboard then
 		if input.KeyCode == Enum.KeyCode.Q then
 			selectUnit(nil)
