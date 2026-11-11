@@ -63,7 +63,7 @@ src/
                               money, lives, place/upgrade/sell, remotes
     PlayerData.luau           DataStore profiles (v2 + migrations, session lock), rewards, summon, settings
     RateLimit.luau            Per-player, per-remote request limits
-    Lobby.luau                Lobby rooms: privacy, invites, matchmaking, start
+    Lobby.luau                Lobby rooms: privacy, invites, kicks, matchmaking, start
     Banners.luau              Banner rolls (rarity, rate-up, pity) + a pull simulation
   StarterPlayer/StarterPlayerScripts/
     ClientMain.client.luau    All UI: menu, HUD, shop, upgrade panel, settings, inventory, result screen, input
@@ -108,8 +108,8 @@ Other state lives on other objects:
 | Remote | Kind | Purpose |
 |---|---|---|
 | `BeginMatch`, `Retry`, `ReturnToMenu` | Event | Match flow (host only) |
-| `LobbyCreate`, `LobbyJoin`, `LobbyMatchmake`, `LobbyInvite`, `LobbyStart` | Function | Lobby rooms (server module `Lobby`) |
-| `LobbyLeave`, `LobbySetPrivacy`, `LobbyRefresh` / `LobbyState`, `LobbyInvited` | Event | Lobby rooms: requests / what each client sees |
+| `LobbyCreate`, `LobbyJoin`, `LobbyMatchmake`, `LobbyInvite`, `LobbyKick`, `LobbyStart` | Function | Lobby rooms (server module `Lobby`) |
+| `LobbyLeave`, `LobbySetPrivacy`, `LobbyRefresh` / `LobbyState`, `LobbyInvited`, `LobbyKicked` | Event | Lobby rooms: requests / what each client sees |
 | `Surrender`, `SkipWave` | Event | Votes (toggle); pass when every player in the match agrees |
 | `SetSpeed`, `SetAutoSkip`, `SetTargeting` | Event | Speed: host only. Auto Skip: the player's own setting. Targeting: per unit |
 | `PlaceTower(unitId, pos)`, `UpgradeTower(model, all)`, `SellTower` | Function | Unit actions (validated on the server). `unitId` is a key of `profile.Units`; `all = true` buys as many upgrade levels as affordable |
