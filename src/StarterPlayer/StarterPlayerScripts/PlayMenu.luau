@@ -318,7 +318,13 @@ function PlayMenu.init(ui)
 				Text = m and m.Name or "- empty -", TextColor3 = m and C.WHITE or C.TEXT_DIM,
 				TextXAlignment = Enum.TextXAlignment.Left, TextTruncate = Enum.TextTruncate.AtEnd,
 			})
-			if m then
+			if m and isHost and m.UserId ~= player.UserId then
+				-- the host can remove anyone else from the lobby
+				local kickButton = pixelButton(row, "KICK", UDim2.fromOffset(72, 30), UDim2.new(1, -42, 0.5, 0), 15, C.RED_BTN, C.RED_EDGE, C.WHITE)
+				kickButton.MouseButton1Click:Connect(function()
+					if call(Remote.LobbyKick, m.UserId) then say(m.Name .. " was removed from the lobby", C.GOLD) end
+				end)
+			elseif m then
 				label(row, {
 					AnchorPoint = Vector2.new(1, 0), Position = UDim2.new(1, -8, 0, 0), Size = UDim2.fromOffset(80, 40), TextSize = 14,
 					Text = (m.UserId == room.HostId and "HOST" or "") .. (m.UserId == player.UserId and (m.UserId == room.HostId and " YOU" or "YOU") or ""),
@@ -430,6 +436,13 @@ function PlayMenu.init(ui)
 		end)
 	end)
 
+	-- the host removed this player from their lobby; the LobbyState that follows (no room) shows it
+	local kickedNote = nil
+	Remote.LobbyKicked.OnClientEvent:Connect(function(info)
+		local host = typeof(info) == "table" and tostring(info.HostName) or "The host"
+		kickedNote = host .. " removed you from the lobby"
+	end)
+
 	-- ===== server state =====
 	Remote.LobbyState.OnClientEvent:Connect(function(state)
 		if typeof(state) ~= "table" then return end
@@ -443,7 +456,8 @@ function PlayMenu.init(ui)
 			end
 			show("Room")
 		elseif wasInRoom then
-			say("You left the lobby")
+			if kickedNote then say(kickedNote, C.RED) else say("You left the lobby") end
+			kickedNote = nil
 			show(selStage and "Lobby" or "Mode")
 		elseif dim.Visible and screen == "Lobby" then
 			show("Lobby") -- refresh the open lobbies list

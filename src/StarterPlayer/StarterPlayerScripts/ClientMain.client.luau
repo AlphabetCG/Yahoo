@@ -77,6 +77,8 @@ for _, name in ipairs({
 	"LobbyStart",
 	"LobbyMatchmake",
 	"LobbyRefresh",
+	"LobbyKick",
+	"LobbyKicked",
 	"EquipUnit",
 	"LockUnit",
 	"SellUnits",
@@ -373,11 +375,9 @@ make("UIGradient", {
 
 local MENU_PX = 6
 local sceneHolder = make("Frame", { Name = "Scene", Size = UDim2.fromScale(1, 1), BackgroundTransparency = 1 }, menu)
-local sceneAnim = {}
 
 local function buildScene()
 	sceneHolder:ClearAllChildren()
-	table.clear(sceneAnim)
 	local size = menu.AbsoluteSize
 	if size.X < 10 then return end
 	local scaler = make("Frame", { Size = UDim2.fromOffset(0, 0), BackgroundTransparency = 1 }, sceneHolder)
@@ -429,35 +429,9 @@ local function buildScene()
 			R(scaler, x, y, 1, 1, (rng:NextNumber() < 0.5) and WHITE or rgb(255, 232, 110))
 		end
 	end
-
-	-- the hero on the left, a wisp on the right
-	local feetY = groundY + 16
-	local function actor(name, cx, bob, opts)
-		local w, h = PixelArt.size(name)
-		R(scaler, cx - w // 2 + 1, feetY - 1, w - 2, 2, BLACK, 0.6)
-		local sprite = PixelArt.sprite(name, opts)
-		sprite.Parent = scaler
-		table.insert(sceneAnim, { frame = sprite, x = cx - w // 2, y = feetY - h, bob = bob, phase = rng:NextNumber() * 6 })
-	end
-	actor("Herobrine", math.floor(aw * 0.30), false)
-	actor("Wisp", math.floor(aw * 0.66), true, { tier = 3, color = Config.Tiers[3].Color })
 end
 menu:GetPropertyChangedSignal("AbsoluteSize"):Connect(buildScene)
 buildScene()
-
-RunService.RenderStepped:Connect(function()
-	if not menuGui.Enabled then return end
-	local t = os.clock()
-	for _, a in ipairs(sceneAnim) do
-		local off
-		if a.bob then
-			off = -math.floor(math.abs(math.sin(t * 4 + a.phase)) * 2.5)
-		else
-			off = (math.sin(t * 2 + a.phase) > 0.4) and -1 or 0
-		end
-		a.frame.Position = UDim2.fromOffset(a.x, a.y + off)
-	end
-end)
 
 -- title (with a pixel drop shadow, gently bobbing)
 local titleBox = make("Frame", {
@@ -677,58 +651,45 @@ local ABILITY_COLORS = { Burn = rgb(255, 150, 60), Slow = rgb(110, 210, 255) }
 local upPanel = pixelPanel(hudGui, {
 	AnchorPoint = Vector2.new(0, 1),
 	Position = UDim2.new(0, 16, 1, -16),
-	Size = UDim2.fromOffset(300, 396),
+	Size = UDim2.fromOffset(300, 420),
 	Visible = false,
 })
-local upTitle = label(upPanel, {
-	Position = UDim2.fromOffset(12, 8),
-	Size = UDim2.new(1, -64, 0, 34),
-	TextSize = 24,
-	TextColor3 = GOLD,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Text = "",
-})
+-- Every text line shrinks to fit (TextScaled + a max size) instead of running out of the panel.
+local function panelText(y, h, maxSize, props)
+	props.Position = UDim2.fromOffset(14, y)
+	props.Size = props.Size or UDim2.new(1, -28, 0, h)
+	props.TextScaled = true
+	props.TextXAlignment = Enum.TextXAlignment.Left
+	props.Text = ""
+	local l = label(upPanel, props)
+	make("UITextSizeConstraint", { MaxTextSize = maxSize }, l)
+	return l
+end
+-- header: the unit's name (left of the X), then its account level and in-match upgrade level
+local upTitle = panelText(10, 26, 24, { Size = UDim2.new(1, -66, 0, 26), TextColor3 = GOLD })
+local upLevel = panelText(38, 18, 16, { RichText = true })
 local upClose = pixelButton(upPanel, "X", UDim2.fromOffset(34, 34), UDim2.new(1, -26, 0, 26), 20, RED_BTN, RED_EDGE, WHITE)
-make("Frame", { Position = UDim2.fromOffset(12, 46), Size = UDim2.new(1, -24, 0, 3), BackgroundColor3 = BORDER, BackgroundTransparency = 0.5, BorderSizePixel = 0 }, upPanel)
+make("Frame", { Position = UDim2.fromOffset(12, 62), Size = UDim2.new(1, -24, 0, 3), BackgroundColor3 = BORDER, BackgroundTransparency = 0.5, BorderSizePixel = 0 }, upPanel)
 
 local function statRow(y)
-	return label(upPanel, {
-		Position = UDim2.fromOffset(14, y),
-		Size = UDim2.new(1, -28, 0, 26),
-		TextSize = 20,
-		RichText = true,
-		TextXAlignment = Enum.TextXAlignment.Left,
-		Text = "",
-	})
+	return panelText(y, 24, 20, { RichText = true })
 end
-local rowDamage = statRow(58)
-local rowRange = statRow(88)
-local rowSpeed = statRow(118)
-local upName = label(upPanel, {
-	Position = UDim2.fromOffset(14, 148),
-	Size = UDim2.new(1, -28, 0, 22),
-	TextSize = 18,
-	TextColor3 = GOLD,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Text = "",
-})
+local rowDamage = statRow(72)
+local rowRange = statRow(98)
+local rowSpeed = statRow(124)
+local upName = panelText(152, 20, 17, { TextColor3 = GOLD })
 -- the ability the unit has now, or the one the next refine adds
-local abilityLabel = label(upPanel, {
-	Position = UDim2.fromOffset(14, 172),
-	Size = UDim2.new(1, -28, 0, 20),
-	TextScaled = true,
-	TextXAlignment = Enum.TextXAlignment.Left,
-	Text = "",
-})
-make("UITextSizeConstraint", { MaxTextSize = 15 }, abilityLabel)
-local upButton = pixelButton(upPanel, "UPGRADE", UDim2.new(1, -104, 0, 54), UDim2.new(0, 112, 0, 226), 20, GREEN_BTN, GREEN_EDGE, WHITE)
-local upMaxButton = pixelButton(upPanel, "MAX", UDim2.fromOffset(76, 54), UDim2.new(1, -52, 0, 226), 22, GREEN_BTN, GREEN_EDGE, WHITE)
+local abilityLabel = panelText(174, 18, 15, {})
+-- the Flower Mage (Buffer) bonus this unit gets right now
+local buffLabel = panelText(194, 18, 15, { TextColor3 = rgb(255, 150, 200) })
+local upButton = pixelButton(upPanel, "UPGRADE", UDim2.new(1, -104, 0, 54), UDim2.new(0, 112, 0, 246), 20, GREEN_BTN, GREEN_EDGE, WHITE)
+local upMaxButton = pixelButton(upPanel, "MAX", UDim2.fromOffset(76, 54), UDim2.new(1, -52, 0, 246), 22, GREEN_BTN, GREEN_EDGE, WHITE)
 
--- targeting selector:  <  TARGET: FIRST  >
-local targetPrev = pixelButton(upPanel, "<", UDim2.fromOffset(40, 40), UDim2.new(0, 34, 0, 298), 24)
-local targetNext = pixelButton(upPanel, ">", UDim2.fromOffset(40, 40), UDim2.new(1, -34, 0, 298), 24)
+-- targeting selector:  <  TARGET: FIRST  >  (hidden for units that don't shoot)
+local targetPrev = pixelButton(upPanel, "<", UDim2.fromOffset(40, 40), UDim2.new(0, 34, 0, 316), 24)
+local targetNext = pixelButton(upPanel, ">", UDim2.fromOffset(40, 40), UDim2.new(1, -34, 0, 316), 24)
 local targetLabel = label(upPanel, {
-	Position = UDim2.fromOffset(60, 278),
+	Position = UDim2.fromOffset(60, 296),
 	Size = UDim2.new(1, -120, 0, 40),
 	BackgroundTransparency = 0,
 	BackgroundColor3 = PANEL_EDGE,
@@ -738,7 +699,7 @@ local targetLabel = label(upPanel, {
 })
 
 -- sell button
-local sellButton = pixelButton(upPanel, "SELL", UDim2.new(1, -28, 0, 50), UDim2.new(0.5, 0, 0, 356), 22, RED_BTN, RED_EDGE, WHITE)
+local sellButton = pixelButton(upPanel, "SELL", UDim2.new(1, -28, 0, 50), UDim2.new(0.5, 0, 0, 380), 22, RED_BTN, RED_EDGE, WHITE)
 
 -- under the gear: the view lock (the map can't be dragged or zoomed, so a tap can't move it by
 -- accident), then zoom buttons for touch screens (pinching zooms too; a mouse has its wheel)
@@ -803,7 +764,10 @@ local function refreshUpgradePanel()
 	local nxt = Config.ScaledStats(unitName, level + 1, unitLevel)
 
 	upPanel.Visible = true
-	upTitle.Text = ("%s  LV%d  UP%d"):format(Config.DisplayName(unitName), unitLevel, level)
+	upTitle.Text = Config.DisplayName(unitName)
+	local maxLevel = Config.MaxLevel(unitName)
+	upLevel.Text = ("<font color='#BEC8E0'>LV %d</font>    %s"):format(unitLevel,
+		level >= maxLevel and "<font color='#FFD054'>UPGRADES MAXED</font>" or ("UP %d / %d"):format(level, maxLevel))
 	local function seconds(v)
 		local txt = ("%.2f"):format(v):gsub("0+$", ""):gsub("%.$", "")
 		return txt .. "s"
@@ -828,9 +792,7 @@ local function refreshUpgradePanel()
 		rowRange.Text = "RANGE  WHOLE MAP"
 		rowSpeed.Text = statText("EVERY ", cur.Cooldown, nxt and nxt.Cooldown, seconds)
 	else
-		local buff = selectedTower:GetAttribute("Buff") or 0
-		local buffText = buff > 0 and ("  <font color='#FF96C8'>+%d%%</font>"):format(math.floor(buff * 100 + 0.5)) or ""
-		rowDamage.Text = statText("DAMAGE", cur.Damage, nxt and nxt.Damage, fmtNum) .. buffText
+		rowDamage.Text = statText("DAMAGE", cur.Damage, nxt and nxt.Damage, fmtNum)
 		rowRange.Text = statText("RANGE ", cur.Range, nxt and nxt.Range, fmtNum)
 		rowSpeed.Text = statText("SPA   ", cur.Cooldown, nxt and nxt.Cooldown, seconds)
 	end
@@ -847,9 +809,15 @@ local function refreshUpgradePanel()
 		abilityLabel.Text = ""
 	end
 
+	-- a Flower Mage (Buffer) nearby: its bonus on its own line
+	local buff = not kind and selectedTower:GetAttribute("Buff") or 0
+	buffLabel.Text = buff > 0 and ("BUFFED: +%d%% DAMAGE"):format(math.floor(buff * 100 + 0.5)) or ""
+
 	local mine = selectedTower:GetAttribute("OwnerId") == player.UserId
 
-	-- targeting + sell info
+	-- targeting (only for units that shoot) + sell info
+	local shoots = kind == nil
+	targetPrev.Visible, targetNext.Visible, targetLabel.Visible = shoots, shoots, shoots
 	local mode = selectedTower:GetAttribute("Targeting") or "First"
 	targetLabel.Text = "TARGET: " .. string.upper(mode)
 	targetLabel.TextColor3 = (mode == "None") and RED or WHITE
@@ -1107,20 +1075,34 @@ local function rebuildShop()
 					ZIndex = 3,
 				})
 			end
+			-- the account level sits on the portrait; the name and the stat line shrink to fit the card
 			label(card, {
-				Position = UDim2.fromOffset(0, 94),
-				Size = UDim2.new(1, 0, 0, 26),
+				Position = UDim2.fromOffset(9, 70),
+				Size = UDim2.fromOffset(44, 16),
+				Text = "LV" .. u.Level,
+				TextSize = 14,
+				TextColor3 = GOLD,
+				TextXAlignment = Enum.TextXAlignment.Left,
+				ZIndex = 3,
+			})
+			local nameLabel = label(card, {
+				Position = UDim2.fromOffset(6, 94),
+				Size = UDim2.new(1, -12, 0, 26),
 				Text = Config.DisplayName(name),
-				TextSize = 22,
+				TextScaled = true,
 				TextColor3 = Config.RarityOf(name).Color,
 			})
-			label(card, {
-				Position = UDim2.fromOffset(0, 120),
-				Size = UDim2.new(1, 0, 0, 20),
-				Text = ("LV%d  %s"):format(u.Level, Config.UnitSummary(name, stats)),
-				TextSize = 14,
+			make("UITextSizeConstraint", { MaxTextSize = 22 }, nameLabel)
+			local c = nameLabel.TextColor3
+			if c.R + c.G + c.B < 0.6 then nameLabel.TextStrokeColor3 = rgb(200, 204, 220) end -- dark rarity (Secret): light outline
+			local statLabel = label(card, {
+				Position = UDim2.fromOffset(6, 122),
+				Size = UDim2.new(1, -12, 0, 18),
+				Text = Config.UnitSummary(name, stats),
+				TextScaled = true,
 				TextColor3 = TEXT_DIM,
 			})
+			make("UITextSizeConstraint", { MaxTextSize = 14 }, statLabel)
 			local costLabel = label(card, {
 				Position = UDim2.fromOffset(0, 146),
 				Size = UDim2.new(1, 0, 0, 30),

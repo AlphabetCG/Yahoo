@@ -17,7 +17,7 @@ local RateLimit = require(script.Parent:WaitForChild("RateLimit"))
 
 local Lobby = {}
 
-local rooms = {}      -- [id] = { Id, Host, StageId, Privacy, Members = { player }, Invited = { [userId] = true }, Started }
+local rooms = {}      -- [id] = { Id, Host, StageId, Privacy, Members = { player }, Invited = { [userId] = true }, Kicked = { [userId] = true }, Started }
 local roomOf = {}     -- [player] = room
 local nextId = 0
 local remotes = {}
@@ -37,6 +37,7 @@ end
 -- Can `player` see / join `room`?
 local function canJoin(player, room)
 	if room.Started or #room.Members >= Config.MaxPartySize or roomOf[player] == room then return false end
+	if room.Kicked[player.UserId] then return false end -- kicked by the host (a new invite lets them back)
 	if room.Privacy == "Public" then return true end
 	if room.Invited[player.UserId] then return true end
 	return room.Privacy == "Friends" and isFriend(player, room.Host.UserId)
@@ -104,7 +105,7 @@ local function create(player, stageId, privacy)
 		if not ok then return nil, msg end
 	end
 	nextId += 1
-	local room = { Id = nextId, Host = player, StageId = stageId, Privacy = privacy, Members = {}, Invited = {}, Started = false }
+	local room = { Id = nextId, Host = player, StageId = stageId, Privacy = privacy, Members = {}, Invited = {}, Kicked = {}, Started = false }
 	rooms[room.Id] = room
 	join(player, room)
 	return room
@@ -142,6 +143,7 @@ function Lobby.init(remotesFolder, hookTable)
 	end
 	newRemote("RemoteEvent", "LobbyState")
 	newRemote("RemoteEvent", "LobbyInvited")
+	newRemote("RemoteEvent", "LobbyKicked") -- tells a player the host removed them
 	local createR = newRemote("RemoteFunction", "LobbyCreate")
 	local joinR = newRemote("RemoteFunction", "LobbyJoin")
 	local leaveR = newRemote("RemoteEvent", "LobbyLeave")
@@ -150,6 +152,7 @@ function Lobby.init(remotesFolder, hookTable)
 	local startR = newRemote("RemoteFunction", "LobbyStart")
 	local matchmakeR = newRemote("RemoteFunction", "LobbyMatchmake")
 	local refreshR = newRemote("RemoteEvent", "LobbyRefresh")
+	local kickR = newRemote("RemoteFunction", "LobbyKick")
 
 	createR.OnServerInvoke = function(player, stageId, privacy)
 		if not RateLimit.allow(player, "LobbyCreate", 2) then return false, "Please wait" end
@@ -186,7 +189,24 @@ function Lobby.init(remotesFolder, hookTable)
 		if roomOf[target] == room then return false, "Already in your lobby" end
 		if #room.Members >= Config.MaxPartySize then return false, "Your lobby is full" end
 		room.Invited[target.UserId] = true
+		room.Kicked[target.UserId] = nil
 		remotes.LobbyInvited:FireClient(target, { RoomId = room.Id, HostName = player.DisplayName, StageId = room.StageId })
+		broadcast()
+		return true
+	end
+
+	-- the host removes a member; they can't join this room again unless the host invites them
+	kickR.OnServerInvoke = function(player, userId)
+		if not RateLimit.allow(player, "LobbyKick", 3) then return false, "Please wait" end
+		local room = roomOf[player]
+		if not room or room.Host ~= player then return false, "Only the lobby host can kick" end
+		if room.Started then return false, "The match is already starting" end
+		local target = typeof(userId) == "number" and Players:GetPlayerByUserId(userId)
+		if not target or target == player or roomOf[target] ~= room then return false, "That player isn't in your lobby" end
+		leave(target)
+		room.Invited[target.UserId] = nil
+		room.Kicked[target.UserId] = true
+		remotes.LobbyKicked:FireClient(target, { HostName = player.DisplayName })
 		broadcast()
 		return true
 	end
